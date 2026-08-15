@@ -45,5 +45,6 @@ export function handleToolError(error: unknown, toolName: string): MCPResponse {
         text: `❌ **Error in ${toolName}** (${errorCode})\n\n${errorMessage}`,
       },
     ],
+    isError: true,
   };
 }

@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -8,6 +9,17 @@ import { TonalService } from './services/tonal-service.js';
 import { allTools, toolsRegistry } from './tools/registry.js';
 import { handleToolError } from './utils/error-handler.js';
 
+const packageMetadata: unknown = createRequire(import.meta.url)('../package.json');
+if (
+  !packageMetadata ||
+  typeof packageMetadata !== 'object' ||
+  !('version' in packageMetadata) ||
+  typeof packageMetadata.version !== 'string'
+) {
+  throw new Error('package.json must contain a string version');
+}
+const packageVersion = packageMetadata.version;
+
 export class TonalMCPServer {
   private server: Server;
   private tonalService: TonalService;
@@ -16,7 +28,7 @@ export class TonalMCPServer {
     this.server = new Server(
       {
         name: 'tonal-mcp',
-        version: '0.1.0',
+        version: packageVersion,
       },
       {
         capabilities: {
@@ -38,6 +50,7 @@ export class TonalMCPServer {
           name: tool.name,
           description: tool.description,
           inputSchema: tool.inputSchema,
+          annotations: tool.annotations,
         })),
       };
     });

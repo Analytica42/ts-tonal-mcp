@@ -10,6 +10,45 @@ import { getUserStats, getRecentProgress } from './user-stats.js';
 import { listCustomWorkouts, deleteCustomWorkout, getCustomWorkoutDetails, createWorkout } from './custom-workouts.js';
 import { getWorkoutForEditing, updateWorkout } from './workout-editing.js';
 
+const setDetailsSchema = {
+  type: 'array',
+  minItems: 1,
+  description: 'Non-empty per-set programming. This array is authoritative and its length defines the set count; if sets is also supplied, it must match this length.',
+  items: {
+    type: 'object',
+    properties: {
+      reps: {
+        type: 'number',
+        description: 'Repetitions for this set',
+      },
+      duration: {
+        type: 'number',
+        description: 'Duration in seconds for this set',
+      },
+      weight: {
+        type: 'number',
+        description: 'Weight percentage (0-100) for this set',
+      },
+      warmUp: {
+        type: 'boolean',
+        description: 'Whether this is a warm-up set',
+      },
+      dropSet: {
+        type: 'boolean',
+        description: 'Whether this is a drop set',
+      },
+      burnout: {
+        type: 'boolean',
+        description: 'Whether this is a burnout set',
+      },
+      description: {
+        type: 'string',
+        description: 'Optional description for this set',
+      },
+    },
+  },
+};
+
 // Fitness/Health Tools
 const fitnessTools: MCPToolDefinition[] = [
   {
@@ -19,6 +58,10 @@ const fitnessTools: MCPToolDefinition[] = [
       type: 'object',
       properties: {},
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     handler: getMuscleReadiness,
   },
@@ -30,6 +73,10 @@ const fitnessTools: MCPToolDefinition[] = [
       properties: {},
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     handler: getUserStats,
   },
   {
@@ -39,6 +86,10 @@ const fitnessTools: MCPToolDefinition[] = [
       type: 'object',
       properties: {},
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     handler: getRecentProgress,
   },
@@ -59,21 +110,29 @@ const workoutTools: MCPToolDefinition[] = [
       },
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     handler: getRecentWorkouts,
   },
   {
     name: 'list_custom_workouts',
-    description: 'List all your custom workouts created on Tonal',
+    description: 'List up to 100 custom workouts created on Tonal and report when additional workouts may exist',
     inputSchema: {
       type: 'object',
       properties: {},
       required: [],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     handler: listCustomWorkouts,
   },
   {
     name: 'delete_custom_workout',
-    description: 'Delete a custom workout by name',
+    description: 'Permanently delete a custom workout by exact name after explicit confirmation',
     inputSchema: {
       type: 'object',
       properties: {
@@ -81,8 +140,16 @@ const workoutTools: MCPToolDefinition[] = [
           type: 'string',
           description: 'The exact name of the workout to delete',
         },
+        confirm: {
+          type: 'boolean',
+          description: 'Must be true to permanently delete the resolved workout; otherwise the tool returns a deletion preview',
+        },
       },
-      required: ['workoutName'],
+      required: ['workoutName', 'confirm'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
     handler: deleteCustomWorkout,
   },
@@ -99,11 +166,15 @@ const workoutTools: MCPToolDefinition[] = [
       },
       required: ['workoutName'],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     handler: getCustomWorkoutDetails,
   },
   {
     name: 'create_workout',
-    description: 'Create a new custom workout with specified exercises, sets, and reps. IMPORTANT: Use the "block" parameter to group exercises that should appear together (warmups, cooldowns, supersets, etc.). For example: all warmup exercises with block: 1, first superset with block: 2, second superset with block: 3, cooldown exercises with block: 4. Without a block number, each exercise gets its own separate block.',
+    description: 'Create a new custom workout with specified exercises and per-set or uniform programming. Use the same 1-based "block" number for exercises that should be grouped together; a supplied 0 is accepted and normalized to 1.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -115,14 +186,16 @@ const workoutTools: MCPToolDefinition[] = [
           type: 'array',
           items: {
             type: 'object',
+            description: 'Each exercise requires movementName and either sets for uniform programming or a non-empty setDetails array for per-set programming. If both are supplied, sets must equal the setDetails length; setDetails is authoritative.',
             properties: {
               movementName: {
                 type: 'string',
                 description: 'The exact name of the movement/exercise (use search_movements to find valid names)',
               },
               sets: {
-                type: 'number',
-                description: 'Number of sets for this exercise',
+                type: 'integer',
+                minimum: 1,
+                description: 'Uniform set count used only when setDetails is omitted. If both are supplied, this must equal the setDetails length.',
               },
               reps: {
                 type: 'number',
@@ -136,16 +209,22 @@ const workoutTools: MCPToolDefinition[] = [
                 type: 'number',
                 description: 'Optional: Weight percentage (0-100) for this exercise',
               },
+              setDetails: setDetailsSchema,
               isWarmup: {
                 type: 'boolean',
                 description: 'Optional: Mark this exercise as a warmup',
               },
               block: {
-                type: 'number',
-                description: 'Optional: Block number to group exercises together. Exercises with the same block number will be grouped into a single block on the Tonal. Use for: warmups (block: 1), supersets (block: 2, 3, etc.), cooldowns (block: 99). Without a block number, each exercise appears in its own separate block.',
+                type: 'integer',
+                minimum: 0,
+                description: 'Optional Tonal block number. Tonal blocks are 1-based, but a supplied 0 is accepted and normalized to 1. Equal block values group exercises into a superset. If some exercises include block and others omit it, every block is renumbered by first appearance; otherwise gaps and relative order are preserved.',
               },
             },
-            required: ['movementName', 'sets'],
+            required: ['movementName'],
+            anyOf: [
+              { required: ['sets'] },
+              { required: ['setDetails'] },
+            ],
           },
           description: 'Array of exercises to include in the workout',
         },
@@ -155,6 +234,10 @@ const workoutTools: MCPToolDefinition[] = [
         },
       },
       required: ['title', 'exercises'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
     },
     handler: createWorkout,
   },
@@ -171,11 +254,15 @@ const workoutTools: MCPToolDefinition[] = [
       },
       required: ['workoutName'],
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
     handler: getWorkoutForEditing,
   },
   {
     name: 'update_workout',
-    description: 'Update an existing workout with modified exercises. Accepts complete exercise structure with any changes (add/remove/modify exercises, change sets/reps/weight). IMPORTANT: Use the same "block" number for exercises that should alternate (supersets). For example: block: 1 for both shoulder press and bench press = they alternate. Different block numbers = exercises done separately. Returns fresh workout state after saving.',
+    description: 'Update an existing workout with modified exercises and per-set or uniform programming. Preserve 1-based "block" values from get_workout_for_editing; a legacy 0 is accepted and normalized to 1 on save. Returns fresh workout state after saving.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -195,14 +282,16 @@ const workoutTools: MCPToolDefinition[] = [
           type: 'array',
           items: {
             type: 'object',
+            description: 'Each exercise requires movementName and either sets for uniform programming or a non-empty setDetails array for per-set programming. If both are supplied, sets must equal the setDetails length; setDetails is authoritative.',
             properties: {
               movementName: {
                 type: 'string',
                 description: 'The exact name of the movement/exercise',
               },
               sets: {
-                type: 'number',
-                description: 'Number of sets for this exercise',
+                type: 'integer',
+                minimum: 1,
+                description: 'Uniform set count used only when setDetails is omitted. If both are supplied, this must equal the setDetails length.',
               },
               reps: {
                 type: 'number',
@@ -216,17 +305,31 @@ const workoutTools: MCPToolDefinition[] = [
                 type: 'number',
                 description: 'Optional: Weight percentage (0-100) for this exercise',
               },
+              setDetails: setDetailsSchema,
+              isWarmup: {
+                type: 'boolean',
+                description: 'Optional: Mark this exercise as a warmup',
+              },
               block: {
-                type: 'number',
-                description: 'Optional: Block number to group exercises. Exercises with the same block number will alternate (supersets). Use for: warmups (block: 1), supersets (block: 2, 3, etc.), cooldowns (block: 99). Without a block number, each exercise appears in its own separate block.',
+                type: 'integer',
+                minimum: 0,
+                description: 'Optional Tonal block number. Tonal blocks are 1-based, but a supplied 0 is accepted and normalized to 1. Equal block values group exercises into a superset. If some exercises include block and others omit it, every block is renumbered by first appearance; otherwise gaps and relative order are preserved.',
               },
             },
-            required: ['movementName', 'sets'],
+            required: ['movementName'],
+            anyOf: [
+              { required: ['sets'] },
+              { required: ['setDetails'] },
+            ],
           },
           description: 'Complete array of exercises for the updated workout',
         },
       },
       required: ['workoutName', 'exercises'],
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
     handler: updateWorkout,
   },
@@ -249,6 +352,10 @@ const movementTools: MCPToolDefinition[] = [
         },
       },
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     handler: getMovements,
   },
@@ -315,6 +422,10 @@ const movementTools: MCPToolDefinition[] = [
         },
       },
       required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
     },
     handler: searchMovements,
   },

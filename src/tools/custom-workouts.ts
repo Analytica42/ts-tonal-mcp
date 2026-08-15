@@ -1,14 +1,58 @@
-import TonalClient from '@dlwiest/ts-tonal-client';
-import { MCPResponse, CreateWorkoutInput } from '../types/index.js';
+import TonalClient, { type TonalWorkout } from '@dlwiest/ts-tonal-client';
+import { MCPResponse } from '../types/index.js';
 import { TonalMCPError, handleToolError } from '../utils/error-handler.js';
 import { exercisesToSets } from '../utils/workout-conversion.js';
+import {
+  validateOptionalString,
+  validateRequiredString,
+  validateWorkoutExercises,
+} from '../utils/validation.js';
+
+const WORKOUT_PAGE_SIZE = 100;
+const WORKOUT_MAX_PAGES = 50;
+
+export async function findWorkoutByName(client: TonalClient, name: string): Promise<TonalWorkout[]> {
+  const normalizedName = name.trim().toLowerCase();
+  const matchingWorkouts: TonalWorkout[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < WORKOUT_MAX_PAGES; page++) {
+    const batch = await client.getUserWorkouts(offset, WORKOUT_PAGE_SIZE);
+    matchingWorkouts.push(
+      ...batch.filter(workout => workout.title.toLowerCase() === normalizedName)
+    );
+
+    if (batch.length < WORKOUT_PAGE_SIZE) {
+      return matchingWorkouts;
+    }
+
+    const nextOffset = offset + batch.length;
+    if (!Number.isSafeInteger(nextOffset) || nextOffset <= offset) {
+      throw new TonalMCPError(
+        'Workout lookup pagination offset did not advance',
+        'PAGINATION_ERROR',
+        502
+      );
+    }
+    offset = nextOffset;
+  }
+
+  throw new TonalMCPError(
+    `Workout lookup exceeded pagination limit of ${WORKOUT_MAX_PAGES} pages`,
+    'PAGINATION_ERROR',
+    502
+  );
+}
 
 export async function listCustomWorkouts(client: TonalClient): Promise<MCPResponse> {
-  // Get all user workouts - getUserWorkouts() likely returns only custom workouts
-  const customWorkouts = await client.getUserWorkouts(0, 100);
+  // Keep list output bounded; name-based lookups page through the complete collection.
+  const customWorkouts = await client.getUserWorkouts(0, WORKOUT_PAGE_SIZE);
+  const hitListingLimit = customWorkouts.length === WORKOUT_PAGE_SIZE;
   
   let report = `# 🏗️ Your Custom Workouts\n\n`;
-  report += `Found ${customWorkouts.length} custom workouts\n\n`;
+  report += hitListingLimit
+    ? `Found at least ${customWorkouts.length} custom workouts (showing ${customWorkouts.length}; additional workouts may exist)\n\n`
+    : `Found ${customWorkouts.length} custom workouts\n\n`;
 
   if (customWorkouts.length === 0) {
     report += `No custom workouts found. Create your own workouts on the Tonal!\n`;
@@ -47,42 +91,52 @@ export async function listCustomWorkouts(client: TonalClient): Promise<MCPRespon
   };
 }
 
-export async function deleteCustomWorkout(client: TonalClient, args?: { workoutName?: string }): Promise<MCPResponse> {
-  if (!args?.workoutName) {
-    throw new TonalMCPError('Workout name is required', 'VALIDATION_ERROR', 400);
-  }
-  
-  // Get all user workouts
-  const allWorkouts = await client.getUserWorkouts(0, 100);
-  
-  // Find workouts with matching name
-  const matchingWorkouts = allWorkouts.filter(workout => 
-    workout.title.toLowerCase() === args.workoutName!.toLowerCase()
-  );
+export async function deleteCustomWorkout(
+  client: TonalClient,
+  args?: Record<string, unknown>
+): Promise<MCPResponse> {
+  const workoutName = validateRequiredString(args?.workoutName, 'Workout name');
+  const matchingWorkouts = await findWorkoutByName(client, workoutName);
 
   if (matchingWorkouts.length === 0) {
     return {
       content: [{
         type: 'text' as const,
-        text: `❌ No custom workout found with name "${args.workoutName}".\n\nUse the list custom workouts tool to see available workouts.`,
+        text: `❌ No custom workout found with name "${workoutName}".\n\nUse the list_custom_workouts tool to see available workouts.`,
       }],
+      isError: true,
     };
   }
 
   if (matchingWorkouts.length > 1) {
+    const workoutList = matchingWorkouts
+      .map(workout => `- ${workout.title} (ID: ${workout.id}, created ${new Date(workout.createdAt).toLocaleDateString()})`)
+      .join('\n');
     return {
       content: [{
         type: 'text' as const,
-        text: `⚠️ Found ${matchingWorkouts.length} workouts with the name "${args.workoutName}".\n\nPlease make workout names unique before deleting.`,
+        text: `❌ Multiple workouts found with name "${workoutName}":\n${workoutList}\n\nPlease make workout names unique before deleting.`,
       }],
+      isError: true,
     };
   }
 
   const workoutToDelete = matchingWorkouts[0];
 
+  if (args?.confirm !== true) {
+    const createdDate = new Date(workoutToDelete.createdAt).toLocaleDateString();
+    const setCount = workoutToDelete.sets?.length || 0;
+    return {
+      content: [{
+        type: 'text' as const,
+        text: `# Deletion Preview\n\n- **Title**: ${workoutToDelete.title}\n- **ID**: \`${workoutToDelete.id}\`\n- **Created**: ${createdDate}\n- **Sets**: ${setCount}\n\n**Warning:** This deletion is permanent. Call delete_custom_workout again with \`confirm: true\` to delete this workout.`,
+      }],
+    };
+  }
+
   try {
     await client.deleteWorkout(workoutToDelete.id);
-    
+
     return {
       content: [{
         type: 'text' as const,
@@ -98,34 +152,33 @@ export async function deleteCustomWorkout(client: TonalClient, args?: { workoutN
   }
 }
 
-export async function getCustomWorkoutDetails(client: TonalClient, args?: { workoutName?: string }): Promise<MCPResponse> {
-  if (!args?.workoutName) {
-    throw new TonalMCPError('Workout name is required', 'VALIDATION_ERROR', 400);
-  }
-  
-  // Get all user workouts
-  const allWorkouts = await client.getUserWorkouts(0, 100);
-  
-  // Find workout with matching name
-  const matchingWorkouts = allWorkouts.filter(workout => 
-    workout.title.toLowerCase() === args.workoutName!.toLowerCase()
-  );
+export async function getCustomWorkoutDetails(
+  client: TonalClient,
+  args?: Record<string, unknown>
+): Promise<MCPResponse> {
+  const workoutName = validateRequiredString(args?.workoutName, 'Workout name');
+  const matchingWorkouts = await findWorkoutByName(client, workoutName);
 
   if (matchingWorkouts.length === 0) {
     return {
       content: [{
         type: 'text' as const,
-        text: `❌ No custom workout found with name "${args.workoutName}".\n\nUse the list custom workouts tool to see available workouts.`,
+        text: `❌ No custom workout found with name "${workoutName}".\n\nUse the list_custom_workouts tool to see available workouts.`,
       }],
+      isError: true,
     };
   }
 
   if (matchingWorkouts.length > 1) {
+    const workoutList = matchingWorkouts
+      .map(workout => `- ${workout.title} (ID: ${workout.id}, created ${new Date(workout.createdAt).toLocaleDateString()})`)
+      .join('\n');
     return {
       content: [{
         type: 'text' as const,
-        text: `⚠️ Found ${matchingWorkouts.length} workouts with the name "${args.workoutName}".\n\nShowing the most recent one.`,
+        text: `❌ Multiple workouts found with name "${workoutName}":\n${workoutList}\n\nPlease use a unique workout name.`,
       }],
+      isError: true,
     };
   }
 
@@ -167,13 +220,19 @@ export async function getCustomWorkoutDetails(client: TonalClient, args?: { work
       if (set.blockNumber !== currentBlock) {
         currentBlock = set.blockNumber;
         if (index > 0) report += `\n`;
-        report += `### Block ${currentBlock + 1}\n`;
+        report += `### Block ${currentBlock}\n`;
       }
       
       // Format set info
       const movementName = movementMap.get(set.movementId) || `Unknown (${set.movementId})`;
       report += `${index + 1}. **${movementName}**\n`;
-      report += `   - Reps: ${set.prescribedReps}`;
+      if (set.prescribedDuration !== undefined) {
+        report += `   - Duration: ${set.prescribedDuration}s`;
+      } else if (set.prescribedReps !== undefined) {
+        report += `   - Reps: ${set.prescribedReps}`;
+      } else {
+        report += `   - Programming not specified`;
+      }
       
       if (set.weightPercentage) {
         report += ` @ ${set.weightPercentage}% weight`;
@@ -203,34 +262,23 @@ export async function getCustomWorkoutDetails(client: TonalClient, args?: { work
   };
 }
 
-export async function createWorkout(client: TonalClient, args?: Record<string, unknown>): Promise<MCPResponse> {
+export async function createWorkout(
+  client: TonalClient,
+  args?: Record<string, unknown>
+): Promise<MCPResponse> {
   try {
-    const workoutData = args as CreateWorkoutInput | undefined;
+    const title = validateRequiredString(args?.title, 'Workout title');
+    const description = validateOptionalString(args?.description, 'Workout description');
+    const exercises = args?.exercises;
+    validateWorkoutExercises(exercises);
 
-    if (!workoutData || !workoutData.title?.trim()) {
-      return handleToolError(new Error('Workout title is required'), 'create_workout');
-    }
-
-    if (!workoutData.exercises || workoutData.exercises.length === 0) {
-      return handleToolError(new Error('At least one exercise is required'), 'create_workout');
-    }
-
-    // Get all movements for conversion
     const movements = await client.getMovements();
+    const sets = exercisesToSets(exercises, movements);
 
-    // Convert exercises to sets using shared utility
-    let sets;
-    try {
-      sets = exercisesToSets(workoutData.exercises, movements);
-    } catch (conversionError) {
-      return handleToolError(conversionError, 'create_workout');
-    }
-
-    // Create the workout
     const workout = await client.createWorkout({
-      title: workoutData.title,
-      sets: sets,
-      description: workoutData.description || '',
+      title,
+      sets,
+      description: description || '',
       createdSource: 'WorkoutBuilder',
     });
 
@@ -238,18 +286,27 @@ export async function createWorkout(client: TonalClient, args?: Record<string, u
     report += `**${workout.title}**\n\n`;
     report += `**Workout ID:** ${workout.id}\n`;
     report += `**Estimated Duration:** ${Math.round(workout.duration / 60)} minutes\n\n`;
+    report += `## Exercises (${exercises.length} total)\n\n`;
 
-    report += `## Exercises (${workoutData.exercises.length} total)\n\n`;
-    workoutData.exercises.forEach((ex, idx) => {
-      if (ex.duration) {
-        report += `${idx + 1}. **${ex.movementName}** - ${ex.sets} sets × ${ex.duration}s`;
-      } else {
-        report += `${idx + 1}. **${ex.movementName}** - ${ex.sets} sets × ${ex.reps} reps`;
+    exercises.forEach((exercise, index) => {
+      const setDetails = Array.isArray(exercise.setDetails) ? exercise.setDetails : undefined;
+      const setCount =
+        setDetails?.length ??
+        (typeof exercise.sets === 'number' ? exercise.sets : 0);
+      report += `${index + 1}. **${exercise.movementName}** - ${setCount} sets`;
+
+      if (setDetails) {
+        report += ` with per-set programming`;
+      } else if (typeof exercise.duration === 'number') {
+        report += ` × ${exercise.duration}s`;
+      } else if (typeof exercise.reps === 'number') {
+        report += ` × ${exercise.reps} reps`;
       }
-      if (ex.weight) {
-        report += ` @ ${ex.weight}%`;
+
+      if (typeof exercise.weight === 'number') {
+        report += ` @ ${exercise.weight}%`;
       }
-      if (ex.isWarmup) {
+      if (exercise.isWarmup === true) {
         report += ` (Warmup)`;
       }
       report += `\n`;
@@ -261,20 +318,6 @@ export async function createWorkout(client: TonalClient, args?: Record<string, u
       content: [{ type: 'text' as const, text: report }],
     };
   } catch (error) {
-    // Extract detailed error information if available
-    if (error && typeof error === 'object' && 'originalError' in error) {
-      const originalError = (error as any).originalError;
-      if (originalError && typeof originalError === 'object') {
-        const errorDetails = JSON.stringify(originalError, null, 2);
-        const errorMessage = (error as any).message || 'Unknown error';
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `❌ **Error creating workout**\n\n${errorMessage}\n\n**Details:**\n\`\`\`json\n${errorDetails}\n\`\`\``,
-          }],
-        };
-      }
-    }
     return handleToolError(error, 'create_workout');
   }
 }

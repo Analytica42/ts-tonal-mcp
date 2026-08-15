@@ -8,7 +8,7 @@ A Model Context Protocol (MCP) server that provides LLMs with access to Tonal fi
 - 💪 **Muscle Readiness** - Get recovery status for workout planning
 - 📊 **Fitness Statistics** - View lifetime stats, streaks, and progress trends
 - 🎯 **Movement Database** - Browse and filter available Tonal exercises
-- ✨ **Workout Creation** - Build custom workouts with exercises, sets, reps, and supersets
+- ✨ **Workout Creation and Editing** - Build and update custom workouts with per-set programming and supersets
 - 🔧 **Extensible Architecture** - Easy to add new tools via registry pattern
 
 ## Installation
@@ -66,19 +66,11 @@ Add the server to Claude Code using the CLI:
 claude mcp add tonal-mcp node /path/to/ts-tonal-mcp/dist/index.js -e TONAL_USERNAME=your_email -e TONAL_PASSWORD=your_password
 ```
 
-### Other LLM Tools (via HTTP Proxy)
+### Hermes Agent
 
-For tools that don't support stdio MCP servers directly (like AnythingLLM), use an HTTP proxy:
+Put `TONAL_USERNAME` and `TONAL_PASSWORD` in `~/.hermes/.env`, then register the server under `mcp_servers.tonal` in `~/.hermes/config.yaml`. Values in `tools.include` are raw tool names such as `get_muscle_readiness`, never registry names such as `mcp__tonal__get_muscle_readiness`. Reload the Hermes gateway/MCP connection before expecting new tools in Telegram sessions.
 
-```bash
-# Install MCP proxy
-npm install -g @anthropic/mcp-proxy
-
-# Run proxy server (from ts-tonal-mcp directory)
-mcp-proxy --stdio-command "node dist/index.js" --port 3001
-```
-
-Then configure your LLM tool to use `http://localhost:3001` as an MCP server.
+See [`hermes-tonal`](https://github.com/dlwiest/hermes-tonal) for the complete read-only and full-access configurations and companion skill.
 
 ### Direct Usage
 
@@ -104,8 +96,32 @@ The server provides these tools for LLM interactions:
 | `get_recent_progress` | Analyze recent progress including workout frequency and trends |
 | `list_custom_workouts` | List all your custom workouts created on Tonal |
 | `create_workout` | Create a new custom workout with exercises, sets, reps/duration, and block grouping |
-| `delete_custom_workout` | Delete a custom workout by name |
+| `delete_custom_workout` | Delete a custom workout by name; requires `confirm: true` |
 | `get_custom_workout_details` | Get detailed information about a custom workout including all sets |
+| `get_workout_for_editing` | Get the complete editable structure of an existing workout |
+| `update_workout` | Update an existing workout by replacing its full set list |
+
+### Per-set programming
+
+`create_workout` and `update_workout` accept `setDetails` when sets differ. Each entry may contain `reps`, `duration`, `weight`, `warmUp`, `dropSet`, `burnout`, and `description`. When present, `setDetails` is authoritative and its length is the set count. Without it, the existing `sets`, `reps`, `duration`, and `weight` fields still create uniform sets.
+
+```json
+{
+  "title": "Bench Progression",
+  "exercises": [
+    {
+      "movementName": "Bench Press",
+      "setDetails": [
+        { "reps": 10, "weight": 40, "warmUp": true },
+        { "reps": 8, "weight": 55 },
+        { "reps": 6, "weight": 65, "dropSet": true }
+      ]
+    }
+  ]
+}
+```
+
+Deletion also requires an explicit opt-in. Pass the exact workout name and `"confirm": true` to `delete_custom_workout`; requests without confirmation do not delete anything.
 
 ## Example Conversations
 
@@ -126,6 +142,7 @@ With the MCP server connected, you can ask Claude:
 - *"Show me my custom workouts"* → Lists all your created workouts
 - *"Create a push/pull workout with warmup and cooldown"* → Builds a structured workout
 - *"Show me details for 'Upper Body Blast'"* → View full workout structure with all sets
+- *"Edit 'Upper Body Blast' and make its last set a drop set"* → Fetches the editable structure, then replaces the workout's full set list
 - *"Delete my workout called 'Old Routine'"* → Removes a specific custom workout
 
 ## Development
@@ -159,12 +176,11 @@ This server uses the Model Context Protocol (MCP) over stdio for communication. 
 - ✅ Claude Desktop
 - ✅ Claude Code
 - ✅ Other MCP-compatible LLM tools
-- ✅ HTTP proxy for non-MCP tools
 
 ## Security
 
 - Credentials are handled securely via environment variables
-- No data is stored or logged by the server
+- Movement metadata is cached locally for up to 24 hours; credentials are not stored or logged
 - All communication with Tonal's API uses the official client library
 
 ## Dependencies

@@ -1,8 +1,13 @@
 import type TonalClient from '@dlwiest/ts-tonal-client';
-import type { TonalWorkout } from '@dlwiest/ts-tonal-client';
-import type { MCPResponse, ExerciseInput, UpdateWorkoutInput } from '../types/index.js';
+import type { MCPResponse } from '../types/index.js';
 import { handleToolError } from '../utils/error-handler.js';
 import { exercisesToSets, reconstructExercisesFromSets } from '../utils/workout-conversion.js';
+import { findWorkoutByName } from './custom-workouts.js';
+import {
+  validateOptionalString,
+  validateRequiredString,
+  validateWorkoutExercises,
+} from '../utils/validation.js';
 
 /**
  * Fetches a workout and returns it in a high-level, editable format.
@@ -13,17 +18,8 @@ export async function getWorkoutForEditing(
   args?: Record<string, unknown>
 ): Promise<MCPResponse> {
   try {
-    const workoutName = args?.workoutName as string;
-
-    if (!workoutName?.trim()) {
-      return handleToolError(new Error('Workout name is required'), 'get_workout_for_editing');
-    }
-
-    // Find the workout by name
-    const allWorkouts = await client.getUserWorkouts(0, 100);
-    const matchingWorkouts = allWorkouts.filter(
-      (workout: TonalWorkout) => workout.title.toLowerCase() === workoutName.toLowerCase()
-    );
+    const workoutName = validateRequiredString(args?.workoutName, 'Workout name');
+    const matchingWorkouts = await findWorkoutByName(client, workoutName);
 
     if (matchingWorkouts.length === 0) {
       return {
@@ -33,33 +29,30 @@ export async function getWorkoutForEditing(
             text: `❌ No custom workout found with name "${workoutName}".\n\nUse the list_custom_workouts tool to see available workouts.`,
           },
         ],
+        isError: true,
       };
     }
 
     if (matchingWorkouts.length > 1) {
-      const workoutList = matchingWorkouts.map((w: TonalWorkout) => `- ${w.title} (ID: ${w.id})`).join('\n');
+      const workoutList = matchingWorkouts
+        .map(workout => `- ${workout.title} (ID: ${workout.id}, created ${new Date(workout.createdAt).toLocaleDateString()})`)
+        .join('\n');
       return {
         content: [
           {
             type: 'text' as const,
-            text: `❌ Multiple workouts found with name "${workoutName}":\n${workoutList}\n\nPlease use a more specific name.`,
+            text: `❌ Multiple workouts found with name "${workoutName}":\n${workoutList}\n\nPlease use a unique workout name.`,
           },
         ],
+        isError: true,
       };
     }
 
     const workout = matchingWorkouts[0];
-
-    // Get full workout details
     const detailedWorkout = await client.getWorkoutById(workout.id);
-
-    // Get movements for reconstruction
     const movements = await client.getMovements();
+    const exercises = reconstructExercisesFromSets(detailedWorkout.sets ?? [], movements);
 
-    // Reconstruct exercises from sets
-    const exercises = reconstructExercisesFromSets(detailedWorkout.sets, movements);
-
-    // Build the response
     let report = `# 🏋️ Workout Ready for Editing\n\n`;
     report += `**${detailedWorkout.title}**\n\n`;
     report += `**Workout ID:** ${detailedWorkout.id}\n`;
@@ -67,56 +60,18 @@ export async function getWorkoutForEditing(
     if (detailedWorkout.description) {
       report += `**Description:** ${detailedWorkout.description}\n`;
     }
-    report += `\n`;
-
-    report += `## Current Structure\n\n`;
+    report += `\n## Current Structure\n\n`;
     report += `\`\`\`json\n`;
     report += JSON.stringify(
       {
         title: detailedWorkout.title,
         description: detailedWorkout.description || '',
-        exercises: exercises,
+        exercises,
       },
       null,
       2
     );
     report += `\n\`\`\`\n\n`;
-
-    report += `## Exercises (${exercises.length} total)\n\n`;
-
-    // Group by block for display
-    const blockGroups = new Map<number, ExerciseInput[]>();
-    for (const ex of exercises) {
-      const block = ex.block || 0;
-      if (!blockGroups.has(block)) {
-        blockGroups.set(block, []);
-      }
-      blockGroups.get(block)!.push(ex);
-    }
-
-    const sortedBlocks = Array.from(blockGroups.entries()).sort((a, b) => a[0] - b[0]);
-
-    for (const [blockNum, blockExercises] of sortedBlocks) {
-      report += `### Block ${blockNum}\n`;
-      if (blockExercises.length > 1) {
-        report += `_(Exercises alternate: ${blockExercises.map(e => e.movementName).join(' → ')})_\n\n`;
-      }
-      for (const ex of blockExercises) {
-        report += `- **${ex.movementName}**\n`;
-        report += `  - Sets: ${ex.sets}\n`;
-        if (ex.reps) {
-          report += `  - Reps: ${ex.reps}\n`;
-        }
-        if (ex.duration) {
-          report += `  - Duration: ${ex.duration}s\n`;
-        }
-        if (ex.weight) {
-          report += `  - Weight: ${ex.weight}%\n`;
-        }
-      }
-      report += `\n`;
-    }
-
     report += `_Use update_workout to save changes to this workout._\n`;
 
     return {
@@ -137,61 +92,54 @@ export async function updateWorkout(
   args?: Record<string, unknown>
 ): Promise<MCPResponse> {
   try {
-    const input = args as UpdateWorkoutInput | undefined;
+    const workoutName = validateRequiredString(args?.workoutName, 'Workout name');
+    const title =
+      args?.title === undefined
+        ? undefined
+        : validateRequiredString(args.title, 'Workout title');
+    const description = validateOptionalString(args?.description, 'Workout description');
+    const exercises = args?.exercises;
+    validateWorkoutExercises(exercises);
 
-    if (!input?.workoutName?.trim()) {
-      return handleToolError(new Error('Workout name is required'), 'update_workout');
-    }
-
-    if (!input.exercises || input.exercises.length === 0) {
-      return handleToolError(new Error('At least one exercise is required'), 'update_workout');
-    }
-
-    // Find the workout by name
-    const allWorkouts = await client.getUserWorkouts(0, 100);
-    const matchingWorkouts = allWorkouts.filter(
-      (workout: TonalWorkout) => workout.title.toLowerCase() === input.workoutName.toLowerCase()
-    );
+    const matchingWorkouts = await findWorkoutByName(client, workoutName);
 
     if (matchingWorkouts.length === 0) {
       return {
         content: [
           {
             type: 'text' as const,
-            text: `❌ No custom workout found with name "${input.workoutName}".\n\nUse the list_custom_workouts tool to see available workouts.`,
+            text: `❌ No custom workout found with name "${workoutName}".\n\nUse the list_custom_workouts tool to see available workouts.`,
           },
         ],
+        isError: true,
       };
     }
 
     if (matchingWorkouts.length > 1) {
-      const workoutList = matchingWorkouts.map((w: TonalWorkout) => `- ${w.title} (ID: ${w.id})`).join('\n');
+      const workoutList = matchingWorkouts
+        .map(workout => `- ${workout.title} (ID: ${workout.id}, created ${new Date(workout.createdAt).toLocaleDateString()})`)
+        .join('\n');
       return {
         content: [
           {
             type: 'text' as const,
-            text: `❌ Multiple workouts found with name "${input.workoutName}":\n${workoutList}\n\nPlease use a more specific name.`,
+            text: `❌ Multiple workouts found with name "${workoutName}":\n${workoutList}\n\nPlease use a unique workout name.`,
           },
         ],
+        isError: true,
       };
     }
 
     const originalWorkout = matchingWorkouts[0];
-
-    // Get full workout details to retrieve required metadata
     const detailedWorkout = await client.getWorkoutById(originalWorkout.id);
-
-    // Get movements for conversion
     const movements = await client.getMovements();
+    const newSets = exercisesToSets(exercises, movements);
 
-    // Convert exercises to sets
-    const newSets = exercisesToSets(input.exercises, movements);
-
-    // Update the workout
     const updatedWorkout = await client.updateWorkout({
       id: detailedWorkout.id,
-      title: input.title || detailedWorkout.title,
-      description: input.description !== undefined ? input.description : detailedWorkout.description || '',
+      title: title || detailedWorkout.title,
+      shortDescription: detailedWorkout.shortDescription,
+      description: description !== undefined ? description : detailedWorkout.description || '',
       sets: newSets,
       coachId: detailedWorkout.coachId,
       assetId: detailedWorkout.assetId,
@@ -199,15 +147,12 @@ export async function updateWorkout(
       createdSource: 'WorkoutBuilder',
     });
 
-    // Reconstruct fresh state to return
-    const freshExercises = reconstructExercisesFromSets(updatedWorkout.sets, movements);
+    const freshExercises = reconstructExercisesFromSets(updatedWorkout.sets ?? [], movements);
 
-    // Build success response
     let report = `# ✅ Workout Updated Successfully\n\n`;
     report += `**${updatedWorkout.title}**\n\n`;
     report += `**Workout ID:** ${updatedWorkout.id}\n`;
     report += `**Duration:** ${Math.round(updatedWorkout.duration / 60)} minutes\n\n`;
-
     report += `## Updated Structure\n\n`;
     report += `\`\`\`json\n`;
     report += JSON.stringify(
@@ -220,64 +165,12 @@ export async function updateWorkout(
       2
     );
     report += `\n\`\`\`\n\n`;
-
-    report += `## Exercises (${freshExercises.length} total)\n\n`;
-
-    // Group by block for display
-    const blockGroups = new Map<number, ExerciseInput[]>();
-    for (const ex of freshExercises) {
-      const block = ex.block || 0;
-      if (!blockGroups.has(block)) {
-        blockGroups.set(block, []);
-      }
-      blockGroups.get(block)!.push(ex);
-    }
-
-    const sortedBlocks = Array.from(blockGroups.entries()).sort((a, b) => a[0] - b[0]);
-
-    for (const [blockNum, blockExercises] of sortedBlocks) {
-      report += `### Block ${blockNum}\n`;
-      if (blockExercises.length > 1) {
-        report += `_(Exercises alternate: ${blockExercises.map(e => e.movementName).join(' → ')})_\n\n`;
-      }
-      for (const ex of blockExercises) {
-        report += `- **${ex.movementName}**\n`;
-        report += `  - Sets: ${ex.sets}\n`;
-        if (ex.reps) {
-          report += `  - Reps: ${ex.reps}\n`;
-        }
-        if (ex.duration) {
-          report += `  - Duration: ${ex.duration}s\n`;
-        }
-        if (ex.weight) {
-          report += `  - Weight: ${ex.weight}%\n`;
-        }
-      }
-      report += `\n`;
-    }
-
     report += `_Your changes have been saved and synced to your Tonal!_\n`;
 
     return {
       content: [{ type: 'text' as const, text: report }],
     };
   } catch (error) {
-    // Extract detailed error information if available
-    if (error && typeof error === 'object' && 'originalError' in error) {
-      const originalError = (error as any).originalError;
-      if (originalError && typeof originalError === 'object') {
-        const errorDetails = JSON.stringify(originalError, null, 2);
-        const errorMessage = (error as any).message || 'Unknown error';
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: `❌ **Error updating workout**\n\n${errorMessage}\n\n**Details:**\n\`\`\`json\n${errorDetails}\n\`\`\``,
-            },
-          ],
-        };
-      }
-    }
     return handleToolError(error, 'update_workout');
   }
 }
