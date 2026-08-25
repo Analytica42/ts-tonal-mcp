@@ -94,16 +94,18 @@ The server provides these tools for LLM interactions:
 | `get_recent_workouts` | View recent workout history with summary statistics |
 | `get_user_stats` | Get comprehensive fitness statistics and current streak |
 | `get_recent_progress` | Analyze recent progress including workout frequency and trends |
+| `get_goal_metrics` | Get weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend; optional name `filter` |
 | `list_custom_workouts` | List all your custom workouts created on Tonal |
 | `create_workout` | Create a new custom workout with exercises, sets, reps/duration, and block grouping |
 | `delete_custom_workout` | Delete a custom workout by name; requires `confirm: true` |
 | `get_custom_workout_details` | Get detailed information about a custom workout including all sets |
 | `get_workout_for_editing` | Get the complete editable structure of an existing workout |
 | `update_workout` | Update an existing workout by replacing its full set list |
+| `estimate_workout_duration` | Estimate how long a prescribed workout would take, without creating or modifying anything |
 
 ### Per-set programming
 
-`create_workout` and `update_workout` accept `setDetails` when sets differ. Each entry may contain `reps`, `duration`, `weight`, `warmUp`, `dropSet`, `burnout`, and `description`. When present, `setDetails` is authoritative and its length is the set count. Without it, the existing `sets`, `reps`, `duration`, and `weight` fields still create uniform sets.
+`create_workout`, `update_workout`, and `estimate_workout_duration` accept `setDetails` when sets differ. Each entry may contain `reps`, `duration`, `weight`, `warmUp`, `dropSet`, `burnout`, and `description`. When present, `setDetails` is authoritative and its length is the set count. Without it, the existing `sets`, `reps`, `duration`, and `weight` fields still create uniform sets. An exercise-level `weight` acts as the fallback for any set that omits its own.
 
 ```json
 {

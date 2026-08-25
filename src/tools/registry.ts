@@ -9,6 +9,8 @@ import { getRecentWorkouts } from './workouts.js';
 import { getUserStats, getRecentProgress } from './user-stats.js';
 import { listCustomWorkouts, deleteCustomWorkout, getCustomWorkoutDetails, createWorkout } from './custom-workouts.js';
 import { getWorkoutForEditing, updateWorkout } from './workout-editing.js';
+import { getGoalMetrics } from './goal-metrics.js';
+import { estimateWorkoutDuration } from './workout-duration.js';
 
 const setDetailsSchema = {
   type: 'array',
@@ -47,6 +49,52 @@ const setDetailsSchema = {
       },
     },
   },
+};
+
+// Shared by create_workout, update_workout, and estimate_workout_duration so all three
+// accept an identical exercise shape. Previously duplicated per tool, which let the
+// descriptions drift apart.
+const exerciseItemSchema = {
+  type: 'object',
+  description: 'Each exercise requires movementName and either sets for uniform programming or a non-empty setDetails array for per-set programming. If both are supplied, sets must equal the setDetails length; setDetails is authoritative.',
+  properties: {
+    movementName: {
+      type: 'string',
+      description: 'The exact name of the movement/exercise (use search_movements to find valid names)',
+    },
+    sets: {
+      type: 'integer',
+      minimum: 1,
+      description: 'Uniform set count used only when setDetails is omitted. If both are supplied, this must equal the setDetails length.',
+    },
+    reps: {
+      type: 'number',
+      description: 'Number of reps per set (for reps-based exercises like Bench Press, Squat, etc.)',
+    },
+    duration: {
+      type: 'number',
+      description: 'Duration in seconds per set (for duration-based exercises like Jumping Jack, Plank, etc.)',
+    },
+    weight: {
+      type: 'number',
+      description: 'Optional: Weight percentage (0-100) for this exercise. When setDetails is supplied, this is the fallback for any set that omits its own weight.',
+    },
+    setDetails: setDetailsSchema,
+    isWarmup: {
+      type: 'boolean',
+      description: 'Optional: Mark this exercise as a warmup',
+    },
+    block: {
+      type: 'integer',
+      minimum: 0,
+      description: 'Optional Tonal block number. Tonal blocks are 1-based, but a supplied 0 is accepted and normalized to 1. Equal block values group exercises into a superset. If some exercises include block and others omit it, every block is renumbered by first appearance; otherwise gaps and relative order are preserved.',
+    },
+  },
+  required: ['movementName'],
+  anyOf: [
+    { required: ['sets'] },
+    { required: ['setDetails'] },
+  ],
 };
 
 // Fitness/Health Tools
@@ -92,6 +140,25 @@ const fitnessTools: MCPToolDefinition[] = [
       destructiveHint: false,
     },
     handler: getRecentProgress,
+  },
+  {
+    name: 'get_goal_metrics',
+    description: "Get Tonal's weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend. Optionally filter by metric name.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        filter: {
+          type: 'string',
+          description: 'Optional case-insensitive substring matched against metric names (e.g. "strength" for Strength Sets and Functional Strength Score). Omit for all metrics.',
+        },
+      },
+      required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: getGoalMetrics,
   },
 ];
 
@@ -184,48 +251,7 @@ const workoutTools: MCPToolDefinition[] = [
         },
         exercises: {
           type: 'array',
-          items: {
-            type: 'object',
-            description: 'Each exercise requires movementName and either sets for uniform programming or a non-empty setDetails array for per-set programming. If both are supplied, sets must equal the setDetails length; setDetails is authoritative.',
-            properties: {
-              movementName: {
-                type: 'string',
-                description: 'The exact name of the movement/exercise (use search_movements to find valid names)',
-              },
-              sets: {
-                type: 'integer',
-                minimum: 1,
-                description: 'Uniform set count used only when setDetails is omitted. If both are supplied, this must equal the setDetails length.',
-              },
-              reps: {
-                type: 'number',
-                description: 'Number of reps per set (for reps-based exercises like Bench Press, Squat, etc.)',
-              },
-              duration: {
-                type: 'number',
-                description: 'Duration in seconds per set (for duration-based exercises like Jumping Jack, Plank, etc.)',
-              },
-              weight: {
-                type: 'number',
-                description: 'Optional: Weight percentage (0-100) for this exercise',
-              },
-              setDetails: setDetailsSchema,
-              isWarmup: {
-                type: 'boolean',
-                description: 'Optional: Mark this exercise as a warmup',
-              },
-              block: {
-                type: 'integer',
-                minimum: 0,
-                description: 'Optional Tonal block number. Tonal blocks are 1-based, but a supplied 0 is accepted and normalized to 1. Equal block values group exercises into a superset. If some exercises include block and others omit it, every block is renumbered by first appearance; otherwise gaps and relative order are preserved.',
-              },
-            },
-            required: ['movementName'],
-            anyOf: [
-              { required: ['sets'] },
-              { required: ['setDetails'] },
-            ],
-          },
+          items: exerciseItemSchema,
           description: 'Array of exercises to include in the workout',
         },
         description: {
@@ -280,48 +306,7 @@ const workoutTools: MCPToolDefinition[] = [
         },
         exercises: {
           type: 'array',
-          items: {
-            type: 'object',
-            description: 'Each exercise requires movementName and either sets for uniform programming or a non-empty setDetails array for per-set programming. If both are supplied, sets must equal the setDetails length; setDetails is authoritative.',
-            properties: {
-              movementName: {
-                type: 'string',
-                description: 'The exact name of the movement/exercise',
-              },
-              sets: {
-                type: 'integer',
-                minimum: 1,
-                description: 'Uniform set count used only when setDetails is omitted. If both are supplied, this must equal the setDetails length.',
-              },
-              reps: {
-                type: 'number',
-                description: 'Number of reps per set (for reps-based exercises)',
-              },
-              duration: {
-                type: 'number',
-                description: 'Duration in seconds per set (for duration-based exercises)',
-              },
-              weight: {
-                type: 'number',
-                description: 'Optional: Weight percentage (0-100) for this exercise',
-              },
-              setDetails: setDetailsSchema,
-              isWarmup: {
-                type: 'boolean',
-                description: 'Optional: Mark this exercise as a warmup',
-              },
-              block: {
-                type: 'integer',
-                minimum: 0,
-                description: 'Optional Tonal block number. Tonal blocks are 1-based, but a supplied 0 is accepted and normalized to 1. Equal block values group exercises into a superset. If some exercises include block and others omit it, every block is renumbered by first appearance; otherwise gaps and relative order are preserved.',
-              },
-            },
-            required: ['movementName'],
-            anyOf: [
-              { required: ['sets'] },
-              { required: ['setDetails'] },
-            ],
-          },
+          items: exerciseItemSchema,
           description: 'Complete array of exercises for the updated workout',
         },
       },
@@ -332,6 +317,26 @@ const workoutTools: MCPToolDefinition[] = [
       destructiveHint: true,
     },
     handler: updateWorkout,
+  },
+  {
+    name: 'estimate_workout_duration',
+    description: 'Estimate how long a prescribed workout would take, without creating or modifying anything on Tonal. Accepts the same exercises shape as create_workout.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        exercises: {
+          type: 'array',
+          items: exerciseItemSchema,
+          description: 'Array of exercises to estimate duration for',
+        },
+      },
+      required: ['exercises'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: estimateWorkoutDuration,
   },
 ];
 
