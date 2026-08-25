@@ -205,7 +205,17 @@ export async function getGoalMetrics(
 
     // today must resolve before the scores request, since it supplies the lookback anchor.
     const today = await tonalToday(client);
-    const startWeek = today ? weekNumberBefore(today.date, SCORE_LOOKBACK_WEEKS) : undefined;
+
+    // The anchor is used ONLY to size the lookback window, so the process clock is an
+    // adequate fallback here even though it is unfit for labeling the current week: a day of
+    // timezone skew cannot change which weeks a 52-week window covers. Passing no startWeek
+    // would fall back to the bare call, which returns {} -- losing every actual AND, with no
+    // scores to anchor on, the ceiling protection against future targets.
+    const anchorDate = today?.date ?? new Date().toISOString().slice(0, 10);
+    const startWeek = weekNumberBefore(anchorDate, SCORE_LOOKBACK_WEEKS);
+
+    // Deliberately NOT derived from the clock. Undefined here makes the report say the
+    // current week could not be determined instead of asserting a week it cannot verify.
     const realCurrentWeekNumber = today?.weekNumber;
 
     const [targetScores, metricScores] = await Promise.all([

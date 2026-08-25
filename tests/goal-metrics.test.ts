@@ -194,6 +194,61 @@ test('requests actuals with a startWeek, because the bare call returns nothing',
   assert.equal(received, 202535, '52 weeks before 2026-08-24 is week 202535');
 });
 
+test('still sends a startWeek when Tonal cannot tell us today', async () => {
+  // Regression guard: passing no startWeek falls back to the bare getMetricScores call, which
+  // returns {} -- that would lose every actual AND, with no scores left to anchor on, the
+  // ceiling protection against future targets. The clock is fine for sizing a 52-week window
+  // even though it must not be used to label the current week.
+  let received: unknown = 'NOT_CALLED';
+  const noToday = fakeClient({
+    getGoalMetrics: async () => GOAL_METRICS,
+    getTargetScores: async () => TARGETS,
+    getMetricScores: async (startWeek: unknown) => {
+      received = startWeek;
+      return SCORES;
+    },
+    getDailyMetrics: async () => {
+      throw new Error('network error');
+    },
+  });
+
+  const text = reportText(await getGoalMetrics(noToday, { filter: 'Strength Sets' }));
+
+  assert.equal(typeof received, 'number', 'a startWeek must still be sent');
+  assert.ok((received as number) > 202000, 'startWeek must look like a YYYYWW value');
+  // The label must still admit it does not know today -- the clock anchors the window only.
+  assert.match(text, /today's current week could not be determined/);
+});
+
+test('degraded path still keeps future targets out of the report', async () => {
+  // today unknown AND a future target present. Actuals still arrive (startWeek was sent), so
+  // the newest scored week anchors the ceiling and 202640 stays out.
+  const noTodayFuture = fakeClient({
+    getGoalMetrics: async () => GOAL_METRICS,
+    getTargetScores: async () => ({
+      'm-strength-sets': [
+        { userId: 'u1', weekNumber: 202640, metricId: 'm-strength-sets', target: 99, lowRange: 90, highRange: 110 },
+        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', target: 12, lowRange: 10, highRange: 13 },
+      ],
+    }),
+    getMetricScores: async () => ({
+      'm-strength-sets': [
+        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 15.75 },
+      ],
+    }),
+    getDailyMetrics: async () => {
+      throw new Error('network error');
+    },
+  });
+
+  const text = reportText(await getGoalMetrics(noTodayFuture, { filter: 'Strength Sets' }));
+
+  assert.doesNotMatch(text, /202640/, 'future target must not surface');
+  assert.doesNotMatch(text, /99\.00/, 'future target value must not surface');
+  assert.match(text, /Most Recent Available Week \(202634\)/);
+  assert.match(text, /Actual: 15\.75/);
+});
+
 test('names the most recent recorded week when the reported week has no actual', async () => {
   // The idle-account shape: targets for recent weeks, actuals only from months ago. Reporting
   // a bare "N/A" hides that there IS history; naming the last recorded week does not.
