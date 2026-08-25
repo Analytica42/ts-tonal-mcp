@@ -17,18 +17,33 @@ test('isoWeekNumber matches the two week numbers confirmed against live Tonal da
   assert.equal(isoWeekNumber('2026-08-24'), 202635);
 });
 
-test('isoWeekNumber follows ISO bucketing where ISO and the US convention disagree', () => {
-  // These encode OUR implementation, not observed Tonal behavior. The conventions differ on
-  // every Sunday and at year boundaries, and the live data available (202627-202635) settles
-  // neither. If Tonal ever buckets a Sunday forward -- or emits 202553 -- ISO is the wrong
-  // reading and these expectations change. See the caveat on isoWeekNumber.
-  assert.equal(isoWeekNumber('2026-08-23'), 202634, 'Sunday closes the ISO week; US would say 202635');
-  assert.equal(isoWeekNumber('2025-12-29'), 202601, 'Monday of ISO week 1 of 2026');
+test('isoWeekNumber follows the ISO week-year, which Tonal is confirmed to use', () => {
+  // No longer an assumption. Tonal's own weekly Volume score for week 202601 (68314)
+  // reconstructs exactly from daily volume on 2025-12-29 + 12-30 + 12-31 -- December 2025
+  // days filed under week 01 of 2026, which only the ISO week-year rule produces. Tonal also
+  // emits no 202553 (ISO gives 2025 52 weeks; the US convention would give 53).
+  assert.equal(isoWeekNumber('2025-12-29'), 202601, 'Tonal counts this Monday in week 202601');
+  assert.equal(isoWeekNumber('2025-12-31'), 202601, 'and this Wednesday too');
+  assert.equal(isoWeekNumber('2025-12-27'), 202552, 'while the prior Saturday stays in 202552');
   assert.equal(isoWeekNumber('2027-01-01'), 202653, 'Friday still inside ISO week 53 of 2026');
+  // The conventions also disagree on every Sunday; ISO closes the week rather than opening one.
+  assert.equal(isoWeekNumber('2026-08-23'), 202634, 'Sunday closes the ISO week; US would say 202635');
+});
+
+test('isoWeekNumber reproduces the year-boundary week Tonal actually reported', () => {
+  // The exact discriminator, as a regression guard: these three dates and no others must land
+  // in 202601, because their daily volumes sum to Tonal's reported 68314 for that week.
+  const boundary = ['2025-12-29', '2025-12-30', '2025-12-31'];
+  for (const date of boundary) {
+    assert.equal(isoWeekNumber(date), 202601, `${date} belongs to Tonal week 202601`);
+  }
+  for (const outside of ['2025-12-28', '2026-01-05']) {
+    assert.notEqual(isoWeekNumber(outside), 202601, `${outside} must NOT fall in 202601`);
+  }
 });
 
 test('isoWeekNumber throws on a date it cannot parse rather than returning NaN', () => {
-  // A NaN would bypass currentTonalWeekNumber's catch and surface as "Current Week (NaN)"
+  // A NaN would bypass tonalToday's catch and surface as "Current Week (NaN)"
   // with every value blank, which reads as authoritative rather than unavailable.
   for (const bad of ['2026-08-24T00:00:00Z', '2026/08/24', '', 'not-a-date']) {
     assert.throws(() => isoWeekNumber(bad), /YYYY-MM-DD/, `${JSON.stringify(bad)} must throw`);

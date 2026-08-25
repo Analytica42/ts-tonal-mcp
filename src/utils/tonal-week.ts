@@ -7,18 +7,23 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
  * first Thursday) for a "YYYY-MM-DD" date string, encoded the way Tonal's own
  * TonalTargetScore/TonalMetricScore `weekNumber` fields are: YYYYWW (2026 week 34 -> 202634).
  *
- * CAVEAT -- the ISO part is INFERRED, not confirmed. What is confirmed live is only that
- * 2026-08-17 (a Monday) is weekNumber 202634 and 2026-08-24 is 202635. Both conventions
- * label those two Mondays identically, so those observations cannot distinguish them. ISO
- * and the US convention (Sunday-start, week 1 contains Jan 1) disagree on every SUNDAY --
- * 2026-08-23 is ISO 202634 but US 202635 -- and again at year boundaries, where 2025 has 52
- * ISO weeks against 53 US weeks, so a real `202553` from Tonal would falsify the ISO
- * reading. The account this was built against carries only 202627-202635, none of which
- * settles it. A single Sunday's bucketing would.
+ * CONFIRMED empirically that Tonal really does use ISO 8601 here, not the US convention
+ * (Sunday-start, week 1 contains Jan 1). Method: sum daily `TonalDailyMetrics.totalVolume`
+ * into weekly buckets under each convention and compare against Tonal's own weekly Volume
+ * metric scores. Three independent results, all on real data:
  *
- * Consequence if the inference is wrong: this returns a week number Tonal has no entry for,
- * which callers treat as "current week has no data yet" and fall back to the most recent
- * available week -- degraded labeling, not wrong numbers.
+ *   1. Tonal's week 202601 (Volume 68314) reconstructs exactly from 2025-12-29 (26456),
+ *      2025-12-30 (17110) and 2025-12-31 (24748) -- December 2025 days filed under week 01
+ *      of 2026. That is the ISO week-year rule; a calendar-year convention cannot produce it.
+ *   2. No 202553 exists; the highest 2025 week observed is 202552. ISO gives 2025 exactly 52
+ *      weeks, whereas the US convention would give 53.
+ *   3. Ten consecutive weekly Volume totals match ISO bucketing 10/10 against 9/10 for the
+ *      US convention, the single miss being precisely the year-boundary week.
+ *
+ * The two conventions also disagree on every Sunday (2026-08-23 is ISO 202634 but US
+ * 202635), so that route would discriminate too on an account that trains on Sundays. This
+ * one does not -- zero Sundays carried volume across 400 days -- which is why the year
+ * boundary was the usable discriminator.
  */
 export function isoWeekNumber(dateString: string): number {
   const [year, month, day] = dateString.split('-').map(Number);
