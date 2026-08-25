@@ -158,9 +158,10 @@ test('anchors on the newest week with an actual, labeled, when today cannot be d
   assert.doesNotMatch(text, /202635/, 'a target-only newer week must not be presented as current');
 });
 
-test('says so explicitly when a metric has targets but no actuals at all', async () => {
-  // Real shape for an inactive account: getMetricScores() returns {} while targets exist,
-  // so every Actual reads N/A. Without a notice the report looks broken rather than empty.
+test('says how far back it looked when a metric has no actuals in the window', async () => {
+  // getMetricScores({}) here stands for "the lookback returned nothing for this metric".
+  // The copy must NOT claim there is no completed activity -- this tool only ever sees a
+  // window, and the account may have years of older history outside it.
   const noScores = fakeClient({
     getGoalMetrics: async () => GOAL_METRICS,
     getTargetScores: async () => TARGETS,
@@ -170,13 +171,56 @@ test('says so explicitly when a metric has targets but no actuals at all', async
 
   const text = reportText(await getGoalMetrics(noScores, { filter: 'Strength Sets' }));
 
-  assert.match(text, /No actual scores recorded yet/);
+  assert.match(text, /No actual scores in the last 52 weeks/);
+  assert.doesNotMatch(text, /no completed activity/, 'must not claim the account never trained');
   assert.match(text, /Target: 13\.00/, 'targets must still be reported');
 });
 
-test('does not claim missing actuals when scores exist', async () => {
+test('requests actuals with a startWeek, because the bare call returns nothing', async () => {
+  // Verified live: getMetricScores() with no startWeek returned {} on a 422-workout account,
+  // while startWeek=202301 returned 709 entries. Omitting it makes every Actual read N/A.
+  let received: unknown = 'NOT_CALLED';
+  const spy = fakeClient({
+    getGoalMetrics: async () => GOAL_METRICS,
+    getTargetScores: async () => TARGETS,
+    getMetricScores: async (startWeek: unknown) => {
+      received = startWeek;
+      return SCORES;
+    },
+    getDailyMetrics: async () => [{ date: '2026-08-24' }],
+  });
+
+  await getGoalMetrics(spy, {});
+  assert.equal(received, 202535, '52 weeks before 2026-08-24 is week 202535');
+});
+
+test('names the most recent recorded week when the reported week has no actual', async () => {
+  // The idle-account shape: targets for recent weeks, actuals only from months ago. Reporting
+  // a bare "N/A" hides that there IS history; naming the last recorded week does not.
+  const idle = fakeClient({
+    getGoalMetrics: async () => GOAL_METRICS,
+    getTargetScores: async () => TARGETS,
+    getMetricScores: async () => ({
+      'm-strength-sets': [
+        { userId: 'u1', weekNumber: 202609, metricId: 'm-strength-sets', score: 21.5 },
+        { userId: 'u1', weekNumber: 202608, metricId: 'm-strength-sets', score: 18 },
+      ],
+    }),
+    getDailyMetrics: async () => [{ date: '2026-08-24' }],
+  });
+
+  const text = reportText(await getGoalMetrics(idle, { filter: 'Strength Sets' }));
+
+  assert.match(text, /Current Week \(202635\)/);
+  assert.match(text, /Actual: N\/A/);
+  assert.match(text, /Most recent was week 202609: 21\.50/);
+  assert.doesNotMatch(text, /No actual scores in the last/, 'there ARE actuals, just not this week');
+});
+
+test('does not claim missing actuals when the reported week has a score', async () => {
   const text = reportText(await getGoalMetrics(client(), { filter: 'Functional' }));
-  assert.doesNotMatch(text, /No actual scores recorded yet/);
+  assert.doesNotMatch(text, /No actual scores in the last/);
+  assert.doesNotMatch(text, /Most recent was week/);
   assert.match(text, /Actual: 216\.83/);
 });
 

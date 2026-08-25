@@ -7,9 +7,16 @@ import type {
 import { MCPResponse } from '../types/index.js';
 import { handleToolError } from '../utils/error-handler.js';
 import { validateOptionalString } from '../utils/validation.js';
-import { currentTonalWeekNumber } from '../utils/tonal-week.js';
+import { tonalToday, weekNumberBefore } from '../utils/tonal-week.js';
 
 const TREND_WEEKS = 4;
+
+// getMetricScores() with no startWeek returns {} -- it defaults to a narrow recent window, so
+// an account with no activity in the last few weeks gets nothing at all even with years of
+// history (verified live: bare call 0 entries, startWeek=202301 returned 709). Ask for a year
+// so the displayed weeks are covered and there is enough history to name the most recent
+// recorded week when the current one is empty.
+const SCORE_LOOKBACK_WEEKS = 52;
 
 interface ReportedWeek {
   weekNumber: number;
@@ -28,18 +35,11 @@ interface ReportedWeek {
  */
 function resolveCeilingWeek(
   weekNumbersDesc: number[],
-  scores: TonalMetricScore[],
+  newestScoredWeek: number | undefined,
   realCurrentWeekNumber: number | undefined
 ): number {
   if (realCurrentWeekNumber !== undefined) {
     return realCurrentWeekNumber;
-  }
-
-  let newestScoredWeek: number | undefined;
-  for (const score of scores) {
-    if (newestScoredWeek === undefined || score.weekNumber > newestScoredWeek) {
-      newestScoredWeek = score.weekNumber;
-    }
   }
 
   return newestScoredWeek ?? weekNumbersDesc[0];
@@ -95,14 +95,22 @@ function buildMetricSection(
     return section;
   }
 
-  // Tonal serves weekly targets regardless of activity but only records an actual once you
-  // train, so an inactive account yields targets with no scores at all. Say that once here,
-  // otherwise every Actual line reads "N/A" and the report looks broken rather than empty.
-  if (scores.length === 0) {
-    section += `_No actual scores recorded yet — targets below, but no completed activity for this metric._\n\n`;
+  // Tonal serves weekly targets regardless of activity but records an actual only for a week
+  // you trained, so an inactive stretch yields target-only weeks. Distinguish "nothing in the
+  // lookback window at all" from "nothing recently, but there is older history" -- otherwise
+  // every Actual reads N/A and the report looks broken rather than simply idle.
+  let newestScoredWeek: number | undefined;
+  for (const entry of scores) {
+    if (newestScoredWeek === undefined || entry.weekNumber > newestScoredWeek) {
+      newestScoredWeek = entry.weekNumber;
+    }
   }
 
-  const ceilingWeek = resolveCeilingWeek(weekNumbersDesc, scores, realCurrentWeekNumber);
+  if (scores.length === 0) {
+    section += `_No actual scores in the last ${SCORE_LOOKBACK_WEEKS} weeks._\n\n`;
+  }
+
+  const ceilingWeek = resolveCeilingWeek(weekNumbersDesc, newestScoredWeek, realCurrentWeekNumber);
   const { weekNumber, isRealCurrentWeek } = selectReportedWeek(
     weekNumbersDesc,
     ceilingWeek,
@@ -120,6 +128,10 @@ function buildMetricSection(
   }
 
   section += `- Actual: ${score ? score.score.toFixed(2) : 'N/A'}\n`;
+  if (!score && newestScoredWeek !== undefined) {
+    const newest = scores.find(s => s.weekNumber === newestScoredWeek);
+    section += `  - No activity recorded this week. Most recent was week ${newestScoredWeek}: ${newest!.score.toFixed(2)}\n`;
+  }
   section += `- Target: ${target ? target.target.toFixed(2) : 'N/A'}\n`;
   if (target) {
     section += `- Range: ${target.lowRange.toFixed(2)} - ${target.highRange.toFixed(2)}\n`;
@@ -191,10 +203,14 @@ export async function getGoalMetrics(
       };
     }
 
-    const [targetScores, metricScores, realCurrentWeekNumber] = await Promise.all([
+    // today must resolve before the scores request, since it supplies the lookback anchor.
+    const today = await tonalToday(client);
+    const startWeek = today ? weekNumberBefore(today.date, SCORE_LOOKBACK_WEEKS) : undefined;
+    const realCurrentWeekNumber = today?.weekNumber;
+
+    const [targetScores, metricScores] = await Promise.all([
       client.getTargetScores(),
-      client.getMetricScores(),
-      currentTonalWeekNumber(client),
+      client.getMetricScores(startWeek),
     ]);
 
     let report = `# 🎯 Goal Metrics\n\n`;

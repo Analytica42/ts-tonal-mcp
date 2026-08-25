@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type TonalClient from '@dlwiest/ts-tonal-client';
-import { currentTonalWeekNumber, isoWeekNumber } from '../src/utils/tonal-week.js';
+import { isoWeekNumber, tonalToday, weekNumberBefore } from '../src/utils/tonal-week.js';
 
 function fakeClient(methods: Record<string, unknown>): TonalClient {
   // Test seam: only getDailyMetrics is stubbed, so the real TonalClient shape is
@@ -35,7 +35,21 @@ test('isoWeekNumber throws on a date it cannot parse rather than returning NaN',
   }
 });
 
-test('currentTonalWeekNumber asks Tonal for today rather than reading the local clock', async () => {
+test('weekNumberBefore walks back by dates, not by subtracting from the YYYYWW encoding', () => {
+  // 202635 minus 4 "weeks" naively would be 202631, which happens to be right here...
+  assert.equal(weekNumberBefore('2026-08-24', 4), 202631);
+  // ...but across a year boundary the encoding is not arithmetic: 202601 minus 4 is not a
+  // week number at all. Date math gives the real answer.
+  assert.equal(weekNumberBefore('2026-01-05', 4), 202550);
+  assert.equal(weekNumberBefore('2026-08-24', 52), 202535);
+  assert.equal(weekNumberBefore('2026-08-24', 0), 202635);
+});
+
+test('weekNumberBefore rejects an unparseable date', () => {
+  assert.throws(() => weekNumberBefore('2026-08-24T00:00:00Z', 4), /YYYY-MM-DD/);
+});
+
+test('tonalToday asks Tonal for today rather than reading the local clock', async () => {
   let requestedDays: number | undefined;
   const client = fakeClient({
     getDailyMetrics: async (days: number) => {
@@ -44,41 +58,30 @@ test('currentTonalWeekNumber asks Tonal for today rather than reading the local 
     },
   });
 
-  assert.equal(await currentTonalWeekNumber(client), 202635);
+  const today = await tonalToday(client);
+  assert.deepEqual(today, { date: '2026-08-24', weekNumber: 202635 });
   assert.equal(requestedDays, 1, 'only today is needed, so only one day should be requested');
 });
 
-test('currentTonalWeekNumber degrades to undefined for an unparseable date', async () => {
+test('tonalToday degrades to undefined for an unparseable date', async () => {
   const client = fakeClient({
     getDailyMetrics: async () => [{ date: '2026-08-24T00:00:00Z' }],
   });
 
-  assert.equal(await currentTonalWeekNumber(client), undefined);
-});
-test('currentTonalWeekNumber asks Tonal for today rather than reading the local clock', async () => {
-  let requestedDays: number | undefined;
-  const client = fakeClient({
-    getDailyMetrics: async (days: number) => {
-      requestedDays = days;
-      return [{ date: '2026-08-24' }];
-    },
-  });
-
-  assert.equal(await currentTonalWeekNumber(client), 202635);
-  assert.equal(requestedDays, 1, 'only today is needed, so only one day should be requested');
+  assert.equal(await tonalToday(client), undefined);
 });
 
-test('currentTonalWeekNumber returns undefined instead of throwing when Tonal fails', async () => {
+test('tonalToday returns undefined instead of throwing when Tonal fails', async () => {
   const client = fakeClient({
     getDailyMetrics: async () => {
       throw new Error('network error');
     },
   });
 
-  assert.equal(await currentTonalWeekNumber(client), undefined);
+  assert.equal(await tonalToday(client), undefined);
 });
 
-test('currentTonalWeekNumber returns undefined when the response carries no date', async () => {
+test('tonalToday returns undefined when the response carries no date', async () => {
   const client = fakeClient({ getDailyMetrics: async () => [] });
-  assert.equal(await currentTonalWeekNumber(client), undefined);
+  assert.equal(await tonalToday(client), undefined);
 });

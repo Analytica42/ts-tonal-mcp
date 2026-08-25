@@ -48,22 +48,48 @@ export function isoWeekNumber(dateString: string): number {
 }
 
 /**
- * Determines the current Tonal week number (YYYYWW) by asking Tonal what "today" is via
- * getDailyMetrics(1) rather than reading the MCP server process's clock, which may run in a
- * different timezone than the account. Verified live: getDailyMetrics(1) returns exactly one
- * row for today, and the series is dense day-by-day, so [0] is today rather than the most
- * recent day that happens to have activity.
+ * Returns the ISO week number (YYYYWW) for the week containing the date `weeks` weeks before
+ * `dateString`. Done by date arithmetic rather than subtracting from the YYYYWW encoding,
+ * which is not arithmetic -- 202601 minus 4 is not a week number at all.
+ */
+export function weekNumberBefore(dateString: string, weeks: number): number {
+  const [year, month, day] = dateString.split('-').map(Number);
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    throw new Error(`Expected a "YYYY-MM-DD" date string, received ${JSON.stringify(dateString)}`);
+  }
+
+  const shifted = new Date(Date.UTC(year, month - 1, day));
+  shifted.setUTCDate(shifted.getUTCDate() - weeks * 7);
+  const iso = shifted.toISOString().slice(0, 10);
+  return isoWeekNumber(iso);
+}
+
+export interface TonalToday {
+  /** Account-local "today" as YYYY-MM-DD, per Tonal itself. */
+  date: string;
+  /** ISO week number (YYYYWW) containing that date. */
+  weekNumber: number;
+}
+
+/**
+ * Asks Tonal what "today" is via getDailyMetrics(1) rather than reading the MCP server
+ * process's clock, which may run in a different timezone than the account. Verified live:
+ * getDailyMetrics(1) returns exactly one row for today, and the series is dense day-by-day,
+ * so [0] is today rather than the most recent day that happens to have activity.
+ *
+ * Returns both the date and its week number because callers need the date to compute a
+ * lookback window (see weekNumberBefore) and the week number to label the report.
  *
  * Returns undefined instead of throwing when this can't be determined, so callers can fall
  * back to clearly-labeled behavior rather than silently guessing.
  */
-export async function currentTonalWeekNumber(client: TonalClient): Promise<number | undefined> {
+export async function tonalToday(client: TonalClient): Promise<TonalToday | undefined> {
   try {
     const [today] = await client.getDailyMetrics(1);
     if (!today?.date) {
       return undefined;
     }
-    return isoWeekNumber(today.date);
+    return { date: today.date, weekNumber: isoWeekNumber(today.date) };
   } catch {
     return undefined;
   }
