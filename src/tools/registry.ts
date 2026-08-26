@@ -10,6 +10,7 @@ import { getUserStats, getRecentProgress } from './user-stats.js';
 import { listCustomWorkouts, deleteCustomWorkout, getCustomWorkoutDetails, createWorkout } from './custom-workouts.js';
 import { getWorkoutForEditing, updateWorkout } from './workout-editing.js';
 import { getGoalMetrics } from './goal-metrics.js';
+import { getStrengthScores } from './strength-scores.js';
 import { estimateWorkoutDuration } from './workout-duration.js';
 
 const setDetailsSchema = {
@@ -143,7 +144,7 @@ const fitnessTools: MCPToolDefinition[] = [
   },
   {
     name: 'get_goal_metrics',
-    description: "Get Tonal's weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend. Optionally filter by metric name.",
+    description: "Get Tonal's weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend. Optionally filter by metric name. Functional Strength Score is not Tonal's headline Strength Score; use get_strength_scores for the latter.",
     inputSchema: {
       type: 'object',
       properties: {
@@ -159,6 +160,26 @@ const fitnessTools: MCPToolDefinition[] = [
       destructiveHint: false,
     },
     handler: getGoalMetrics,
+  },
+  {
+    name: 'get_strength_scores',
+    description: "Get Tonal's headline current Strength Score by body region and a compact per-activity trend. This is distinct from the weekly Functional Strength Score goal metric.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Calendar-day history lookback, not a workout or row count. Omit to query from account creation (all available strength-score history).',
+        },
+      },
+      required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: getStrengthScores,
   },
 ];
 
