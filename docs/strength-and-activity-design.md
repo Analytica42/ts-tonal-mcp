@@ -504,7 +504,7 @@ All HTTP tests use mocked `HttpClient.request`; all MCP tests use the existing p
 
 ### Slice 4 tests (`node:test`)
 
-- Enumeration with `days: 365`, `pageSize: 10`, and 63 mocked rows (an arbitrary fixture count) calls client history with 365, renders 10, reports `10 of 63`, and emits `nextStartIndex: 10`. This independently catches days-versus-rows confusion in the MCP layer.
+- Enumeration with `days: 365`, `pageSize: 10`, and 40 mocked rows calls client history with 365, renders 10, reports `10 of 40`, and emits `nextStartIndex: 10`. This independently catches days-versus-rows confusion in the MCP layer.
 - `startIndex >= discoveredCount` returns an explicit empty page and no next index; the handler makes exactly one history call, catching plausible pagination-loop/infinite-loop designs.
 - The list output names `strength-score-history` coverage and presentation truncation separately.
 - A synthetic activity includes a multi-kilobyte sentinel in `contentCard`; the detail report must not contain the sentinel or raw JSON.
@@ -527,8 +527,8 @@ Decision: test completeness as observable manifest/output behavior, not as an in
 ## 8. What not to build
 
 1. **No pagination over `/users/:id/workout-activities` or `/users/:id/activity-summaries`.** Both are hard-capped, ignore every tested paging mechanism, and expose disjoint 50-row windows. A loop would be wrong and can be infinite.
-2. **No client `getAllWorkoutActivities(): Promise<TonalWorkoutActivity[]>`.** It cannot expose failures without changing the return contract, encourages a 24 MB surprise, and makes source-relative completeness invisible.
-3. **No MCP full-history detail sweep.** Roughly N requests and 24 MB is disproportionate for an interactive model call; the raw data must not enter model context, and MCP timeouts/retries make partial completion hard to communicate safely.
+2. **No client `getAllWorkoutActivities(): Promise<TonalWorkoutActivity[]>`.** It cannot expose failures without changing the return contract, encourages a multi-megabyte surprise, and makes source-relative completeness invisible.
+3. **No MCP full-history detail sweep.** Roughly one request per activity, totalling tens of megabytes, is disproportionate for an interactive model call; the raw data must not enter model context, and MCP timeouts/retries make partial completion hard to communicate safely.
 4. **No T3 script in the initial release.** Caching plus one-at-a-time detail serves the concrete interactive use case. Build the script only when someone needs a durable export and accepts its load, disk, and incomplete-manifest contract.
 5. **No `/formatted/...` method or type.** There is no response sample.
 6. **No raw activity JSON option, debug flag, resource, or attachment in MCP.** A flag would eventually be selected by a model and defeat the context-safety requirement.
