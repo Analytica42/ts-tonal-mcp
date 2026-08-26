@@ -1,5 +1,16 @@
 # Design: Strength Scores and Performed Activity Detail
 
+## Status
+
+**T1 SHIPPED.** Client `0.4.0` added `getCurrentStrengthScores()` and
+`getStrengthScoreHistory(days)`; MCP `0.4.0` added the `get_strength_scores` tool and updated
+all six coupled inventory surfaces. Sections describing T1 below are a record of what was
+built, not outstanding work.
+
+**T2 and T3 are NOT built.** `list_workout_activities`, `get_workout_activity`, the permanent
+completed-activity cache, and the `CacheManager.setPermanent` extension all remain to do, and
+T2 needs a further client release.
+
 ## Recommendation
 
 Ship T1 first as one client release and one MCP release. Ship T2 only after T1 is stable, because T2's arbitrary-ID discovery depends on strength-score history. Do not ship T3 as an MCP tool; defer a bounded, resumable export script until there is a concrete bulk-export use case.

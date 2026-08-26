@@ -5,8 +5,8 @@ lifetime workout count was in the low hundreds spanning roughly three years. Tre
 given. **Do not make Tonal API calls** — you have no credentials and must not request them.
 
 Base: `https://api.tonal.com/v6`. Undocumented private API, reverse-engineered.
-Repo: `/Users/dlwiest/Dev/ts-tonal-client` (published `@dlwiest/ts-tonal-client@0.3.1`).
-Consumer: `/Users/dlwiest/Dev/ts-tonal-mcp` (v0.3.0, 14 tools, pins `^0.3.1`).
+Repo: `/Users/dlwiest/Dev/ts-tonal-client` (published `@dlwiest/ts-tonal-client@0.4.0`).
+Consumer: `/Users/dlwiest/Dev/ts-tonal-mcp` (v0.4.0, 15 tools, pins `^0.4.0`).
 
 ## Existing client surface (already shipped, do not duplicate)
 
@@ -16,8 +16,12 @@ Consumer: `/Users/dlwiest/Dev/ts-tonal-mcp` (v0.3.0, 14 tools, pins `^0.3.1`).
   `getMuscleReadiness`, `getUserStats`, `getCurrentStreak`, `getDailyMetrics(days)`,
   `getGoalMetrics`, `getTargetScores`, `getMetricScores(startWeek)`,
   `estimateWorkoutDuration(sets)`, `createWorkout`, `updateWorkout`, `deleteWorkout`.
-- Nothing in the client exposes **performed** data (actual weight/reps lifted). Everything
-  today is templates, summaries, or aggregates.
+- `getCurrentStrengthScores()` and `getStrengthScoreHistory(days)` **shipped in client 0.4.0**
+  (T1). The MCP exposes them via the `get_strength_scores` tool. Do not reimplement either.
+  `days` is a calendar-day window; the client's `'all'` default derives it from
+  `TonalUserInfo.createdAt`.
+- Nothing in the client exposes **performed** data (actual weight/reps lifted) yet. Everything
+  else today is templates, summaries, or aggregates. That gap is what T2 addresses.
 
 ## NEW endpoints (all verified 200 with real data)
 
