@@ -40,16 +40,16 @@ const TARGETS: TonalTargetScoresResponse = {
     { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', target: 12, lowRange: 10, highRange: 13 },
   ],
   'm-fss': [
-    { userId: 'u1', weekNumber: 202634, metricId: 'm-fss', target: 166.07, lowRange: 140, highRange: 190 },
+    { userId: 'u1', weekNumber: 202634, metricId: 'm-fss', target: 150.00, lowRange: 140, highRange: 190 },
   ],
 } as TonalTargetScoresResponse;
 
 const SCORES: TonalMetricScoresResponse = {
   'm-strength-sets': [
-    { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 15.75 },
+    { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 14.50 },
   ],
   'm-fss': [
-    { userId: 'u1', weekNumber: 202634, metricId: 'm-fss', score: 216.83 },
+    { userId: 'u1', weekNumber: 202634, metricId: 'm-fss', score: 200.00 },
   ],
 } as TonalMetricScoresResponse;
 
@@ -119,8 +119,8 @@ test('labels a fallback week distinctly rather than implying it is the current w
 
   assert.match(text, /Most Recent Available Week \(202634\)/);
   assert.match(text, /current week \(202635\) has no data yet/);
-  assert.match(text, /Actual: 216\.83/);
-  assert.match(text, /Target: 166\.07/);
+  assert.match(text, /Actual: 200\.00/);
+  assert.match(text, /Target: 150\.00/);
 });
 
 test('never reports a pre-populated FUTURE week as current, and keeps it out of the trend', async () => {
@@ -143,18 +143,18 @@ test('never reports a pre-populated FUTURE week as current, and keeps it out of 
   assert.doesNotMatch(text, /Current Week \(202640\)/, 'a future week is not "current"');
   assert.doesNotMatch(text, /Week 202640/, 'a future week must not leak into the trend');
   assert.match(text, /Most Recent Available Week \(202634\)/);
-  assert.match(text, /Actual: 15\.75/);
+  assert.match(text, /Actual: 14\.50/);
 });
 
 test('anchors on the newest week with an actual, labeled, when today cannot be determined', async () => {
   // 202635 exists as a target only; 202634 is the newest week with a recorded actual. With
   // today unknown, 202634 is the honest anchor -- reporting 202635 would show "Actual: N/A"
-  // for a week that may not have happened while burying the real 15.75.
+  // for a week that may not have happened while burying the real actual.
   const text = reportText(await getGoalMetrics(client(null), { filter: 'Strength Sets' }));
 
   assert.match(text, /Most Recent Available Week \(202634\)/);
   assert.match(text, /today's current week could not be determined/);
-  assert.match(text, /Actual: 15\.75/);
+  assert.match(text, /Actual: 14\.50/);
   assert.doesNotMatch(text, /202635/, 'a target-only newer week must not be presented as current');
 });
 
@@ -177,8 +177,9 @@ test('says how far back it looked when a metric has no actuals in the window', a
 });
 
 test('requests actuals with a startWeek, because the bare call returns nothing', async () => {
-  // Verified live: getMetricScores() with no startWeek returned {} on a 422-workout account,
-  // while startWeek=202301 returned 709 entries. Omitting it makes every Actual read N/A.
+  // Verified live: getMetricScores() with no startWeek returns {} even on an account with
+  // years of history, while an explicit early startWeek returns hundreds of entries.
+  // Omitting it makes every Actual read N/A.
   let received: unknown = 'NOT_CALLED';
   const spy = fakeClient({
     getGoalMetrics: async () => GOAL_METRICS,
@@ -233,7 +234,7 @@ test('degraded path still keeps future targets out of the report', async () => {
     }),
     getMetricScores: async () => ({
       'm-strength-sets': [
-        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 15.75 },
+        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 14.50 },
       ],
     }),
     getDailyMetrics: async () => {
@@ -246,7 +247,7 @@ test('degraded path still keeps future targets out of the report', async () => {
   assert.doesNotMatch(text, /202640/, 'future target must not surface');
   assert.doesNotMatch(text, /99\.00/, 'future target value must not surface');
   assert.match(text, /Most Recent Available Week \(202634\)/);
-  assert.match(text, /Actual: 15\.75/);
+  assert.match(text, /Actual: 14\.50/);
 });
 
 test('names the most recent recorded week when the reported week has no actual', async () => {
@@ -257,8 +258,8 @@ test('names the most recent recorded week when the reported week has no actual',
     getTargetScores: async () => TARGETS,
     getMetricScores: async () => ({
       'm-strength-sets': [
-        { userId: 'u1', weekNumber: 202609, metricId: 'm-strength-sets', score: 21.5 },
-        { userId: 'u1', weekNumber: 202608, metricId: 'm-strength-sets', score: 18 },
+        { userId: 'u1', weekNumber: 202410, metricId: 'm-strength-sets', score: 21.5 },
+        { userId: 'u1', weekNumber: 202409, metricId: 'm-strength-sets', score: 18 },
       ],
     }),
     getDailyMetrics: async () => [{ date: '2026-08-24' }],
@@ -268,7 +269,7 @@ test('names the most recent recorded week when the reported week has no actual',
 
   assert.match(text, /Current Week \(202635\)/);
   assert.match(text, /Actual: N\/A/);
-  assert.match(text, /Most recent was week 202609: 21\.50/);
+  assert.match(text, /Most recent was week 202410: 21\.50/);
   assert.doesNotMatch(text, /No actual scores in the last/, 'there ARE actuals, just not this week');
 });
 
@@ -276,7 +277,7 @@ test('does not claim missing actuals when the reported week has a score', async 
   const text = reportText(await getGoalMetrics(client(), { filter: 'Functional' }));
   assert.doesNotMatch(text, /No actual scores in the last/);
   assert.doesNotMatch(text, /Most recent was week/);
-  assert.match(text, /Actual: 216\.83/);
+  assert.match(text, /Actual: 200\.00/);
 });
 
 test('a metric with no score data says so instead of throwing', async () => {
@@ -301,7 +302,7 @@ test('keeps future weeks out of the headline AND trend when today cannot be dete
     }),
     getMetricScores: async () => ({
       'm-strength-sets': [
-        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 15.75 },
+        { userId: 'u1', weekNumber: 202634, metricId: 'm-strength-sets', score: 14.50 },
       ],
     }),
     getDailyMetrics: async () => {
@@ -314,7 +315,7 @@ test('keeps future weeks out of the headline AND trend when today cannot be dete
   assert.doesNotMatch(text, /202640/, 'a target-only future week must not appear anywhere');
   assert.doesNotMatch(text, /202639/, 'a target-only future week must not appear anywhere');
   assert.match(text, /Most Recent Available Week \(202634\)/);
-  assert.match(text, /Actual: 15\.75/, 'the real actual must be the headline, not pushed out');
+  assert.match(text, /Actual: 14\.50/, 'the real actual must be the headline, not pushed out');
 });
 
 test('reports no goal metrics without inventing a filter the caller never passed', async () => {
@@ -346,7 +347,7 @@ test('the trend heading does not claim contiguity for non-contiguous weeks', asy
       'm-strength-sets': [
         { userId: 'u1', weekNumber: 202635, metricId: 'm-strength-sets', target: 13, lowRange: 11, highRange: 15 },
         { userId: 'u1', weekNumber: 202630, metricId: 'm-strength-sets', target: 12, lowRange: 10, highRange: 13 },
-        { userId: 'u1', weekNumber: 202620, metricId: 'm-strength-sets', target: 11, lowRange: 9, highRange: 12 },
+        { userId: 'u1', weekNumber: 202405, metricId: 'm-strength-sets', target: 11, lowRange: 9, highRange: 12 },
       ],
     }),
     getMetricScores: async () => ({

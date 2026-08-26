@@ -18,7 +18,7 @@ test('isoWeekNumber matches the two week numbers confirmed against live Tonal da
 });
 
 test('isoWeekNumber follows the ISO week-year, which Tonal is confirmed to use', () => {
-  // No longer an assumption. Tonal's own weekly Volume score for week 202601 (68314)
+  // No longer an assumption. Tonal's own weekly Volume total for the ISO week numbered 2026-01
   // reconstructs exactly from daily volume on 2025-12-29 + 12-30 + 12-31 -- December 2025
   // days filed under week 01 of 2026, which only the ISO week-year rule produces. Tonal also
   // emits no 202553 (ISO gives 2025 52 weeks; the US convention would give 53).
@@ -32,7 +32,7 @@ test('isoWeekNumber follows the ISO week-year, which Tonal is confirmed to use',
 
 test('isoWeekNumber reproduces the year-boundary week Tonal actually reported', () => {
   // The exact discriminator, as a regression guard: these three dates and no others must land
-  // in 202601, because their daily volumes sum to Tonal's reported 68314 for that week.
+  // in 202601, because their daily volumes sum to the weekly total Tonal reports for it.
   const boundary = ['2025-12-29', '2025-12-30', '2025-12-31'];
   for (const date of boundary) {
     assert.equal(isoWeekNumber(date), 202601, `${date} belongs to Tonal week 202601`);
