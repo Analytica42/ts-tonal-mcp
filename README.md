@@ -95,6 +95,7 @@ The server provides these tools for LLM interactions:
 | `get_user_stats` | Get comprehensive fitness statistics and current streak |
 | `get_recent_progress` | Analyze recent progress including workout frequency and trends |
 | `get_goal_metrics` | Get weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend; optional name `filter` |
+| `get_strength_scores` | Get Tonal's headline current Strength Score by body region and a compact per-activity trend; optional `days` is a calendar-day lookback, not a row count |
 | `list_custom_workouts` | List all your custom workouts created on Tonal |
 | `create_workout` | Create a new custom workout with exercises, sets, reps/duration, and block grouping |
 | `delete_custom_workout` | Delete a custom workout by name; requires `confirm: true` |

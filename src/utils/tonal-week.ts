@@ -12,9 +12,10 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
  * into weekly buckets under each convention and compare against Tonal's own weekly Volume
  * metric scores. Three independent results, all on real data:
  *
- *   1. Tonal's week 202601 (Volume 68314) reconstructs exactly from 2025-12-29 (26456),
- *      2025-12-30 (17110) and 2025-12-31 (24748) -- December 2025 days filed under week 01
- *      of 2026. That is the ISO week-year rule; a calendar-year convention cannot produce it.
+ *   1. Tonal's own weekly Volume total for an ISO week numbered 2026-01 reconstructs exactly
+ *      by summing the daily volumes of 2025-12-29, -30 and -31 -- December 2025 days filed
+ *      under week 01 of 2026. That is the ISO week-year rule; a calendar-year convention
+ *      cannot produce it.
  *   2. No 202553 exists; the highest 2025 week observed is 202552. ISO gives 2025 exactly 52
  *      weeks, whereas the US convention would give 53.
  *   3. Ten consecutive weekly Volume totals match ISO bucketing 10/10 against 9/10 for the

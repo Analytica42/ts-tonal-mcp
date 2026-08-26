@@ -13,9 +13,9 @@ const TREND_WEEKS = 4;
 
 // getMetricScores() with no startWeek returns {} -- it defaults to a narrow recent window, so
 // an account with no activity in the last few weeks gets nothing at all even with years of
-// history (verified live: bare call 0 entries, startWeek=202301 returned 709). Ask for a year
-// so the displayed weeks are covered and there is enough history to name the most recent
-// recorded week when the current one is empty.
+// history (verified live: the bare call returned zero entries while an explicit early
+// startWeek returned hundreds). Ask for a year so the displayed weeks are covered and there
+// is enough history to name the most recent recorded week when the current one is empty.
 const SCORE_LOOKBACK_WEEKS = 52;
 
 interface ReportedWeek {
