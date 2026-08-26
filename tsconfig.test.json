@@ -1,0 +1,20 @@
+{
+  // Typechecks tests, which the build config deliberately excludes.
+  //
+  // The build config sets rootDir to ./src so dist mirrors src, which means tests cannot be
+  // in its `include`. The consequence was that NOTHING typechecked test files: `tsc --noEmit`
+  // skipped them, and `npm test` runs tsx, which strips types via esbuild without checking
+  // them. A deliberate `const x: number = 'string'` in a test file passed both gates.
+  //
+  // That matters because several tests exist specifically to pin type honesty against this
+  // API -- e.g. a fixture that omits an optional field must fail to compile if that field is
+  // ever made required. Such a guard is inert unless something typechecks the fixture.
+  //
+  // noEmit + rootDir "." here; this config is for checking only and never produces output.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "tests/**/*"]
+}

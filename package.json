@@ -9,7 +9,7 @@
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "test": "tsx --test tests/*.test.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },
   "repository": {
     "type": "git",
