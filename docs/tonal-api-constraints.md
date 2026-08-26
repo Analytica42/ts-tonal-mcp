@@ -92,7 +92,7 @@ wrong and it silently returned 12% of the data while claiming completeness.
 
 ## Cost, caching, limits
 
-- Full sweep: ~N requests, avg 58KB, **~24MB** total.
+- Full sweep: one request per activity, averaging ~58KB each, so tens of megabytes in total.
 - No rate-limit headers are exposed on any response.
 - 8 concurrent detail fetches → 8×200 in 890ms, no throttling. Higher concurrency untested.
   Assume nothing; use bounded concurrency and backoff.
