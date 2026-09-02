@@ -203,6 +203,40 @@ Contributions welcome! This server is designed to be easily extensible. Please f
 - Improve error handling and validation
 - Enhance documentation and examples
 
+### Adding a tool
+
+A tool name lives in six places and **nothing in the build validates any of them.**
+`src/tools/registry.ts` is the only source of truth; the rest are hand-maintained and drift
+silently. They split into two layers that fail differently:
+
+*Can the tool be called at all?*
+
+1. `src/tools/registry.ts` — the definition.
+2. `hermes-tonal/config/mcp_servers.tonal.yaml` — read-only profile allowlist (raw names, no
+   `mcp__tonal__` prefix). Read-only tools only.
+3. `hermes-tonal/config/mcp_servers.tonal.full.yaml` — full profile allowlist, every tool.
+
+Miss these and Hermes never exposes the tool, however good the server is.
+
+*Does the agent know when and how to use it?*
+
+4. This README's tool table, plus any stated tool count.
+5. `hermes-tonal/skills/health/tonal/SKILL.md` — the `mcp__tonal__*` inventory, the read-only
+   count, **and** the relevant `## Read workflows` entry. Inventory membership alone is not
+   enough.
+6. `hermes-tonal/skills/health/tonal/references/*.md` — the runbook that actually drives
+   behavior. A "when to use" line pointing at a workflow no runbook describes is worse than
+   silence, because it implies a procedure that does not exist.
+
+Verify mechanically rather than by eye: load the built `dist/tools/registry.js` and check each
+inventory in both directions — nothing missing, and no name that is not registered. When
+checking `SKILL.md` for guidance coverage, strip the bare inventory list first so roster
+membership does not count as coverage.
+
+Note also that `npm run typecheck` covers `tests/` via `tsconfig.test.json`, while `npm test`
+does not typecheck at all — `tsx` strips types without checking them. A test fixture that
+omits an optional field is only a type-honesty guard if `npm run typecheck` runs.
+
 ## Contact
 
 For questions or support, please contact [Derrick Wiest](mailto:me@dlwiest.com).
