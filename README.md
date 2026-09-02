@@ -84,7 +84,7 @@ node dist/index.js
 
 ## Available Tools
 
-The server provides these tools for LLM interactions:
+The server provides 16 tools for LLM interactions:
 
 | Tool | Description |
 |------|-------------|
@@ -96,6 +96,7 @@ The server provides these tools for LLM interactions:
 | `get_recent_progress` | Analyze recent progress including workout frequency and trends |
 | `get_goal_metrics` | Get weekly goal metrics (Volume, Work, Movement Quality Score, Strength Sets, Power Reps, Endurance Sets, Functional Strength Score) with the current week's actual, target, and range plus a recent trend; optional name `filter` |
 | `get_strength_scores` | Get Tonal's headline current Strength Score by body region and a compact per-activity trend; optional `days` is a calendar-day lookback, not a row count |
+| `list_workout_activities` | Enumerate performed activity IDs and dates from Strength Score history; optional `days` is a calendar-day window, while `startIndex` and `pageSize` only page the rendered result |
 | `list_custom_workouts` | List all your custom workouts created on Tonal |
 | `create_workout` | Create a new custom workout with exercises, sets, reps/duration, and block grouping |
 | `delete_custom_workout` | Delete a custom workout by name; requires `confirm: true` |

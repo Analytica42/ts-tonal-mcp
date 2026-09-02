@@ -12,6 +12,7 @@ import { getWorkoutForEditing, updateWorkout } from './workout-editing.js';
 import { getGoalMetrics } from './goal-metrics.js';
 import { getStrengthScores } from './strength-scores.js';
 import { estimateWorkoutDuration } from './workout-duration.js';
+import { listWorkoutActivities } from './workout-activities.js';
 
 const setDetailsSchema = {
   type: 'array',
@@ -203,6 +204,39 @@ const workoutTools: MCPToolDefinition[] = [
       destructiveHint: false,
     },
     handler: getRecentWorkouts,
+  },
+  {
+    name: 'list_workout_activities',
+    description: 'Enumerate performed activity IDs and dates from Strength Score history so a specific activity can be inspected. Tonal is queried once; paging parameters affect presentation only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        days: {
+          type: 'integer',
+          minimum: 1,
+          description: 'Calendar-day enumeration lookback, not a row count. Omit to query from account creation.',
+        },
+        startIndex: {
+          type: 'integer',
+          minimum: 0,
+          default: 0,
+          description: 'Number of newest-first enumeration rows to skip in the rendered result. This is local presentation paging, not a Tonal API offset.',
+        },
+        pageSize: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 50,
+          default: 20,
+          description: 'Maximum rows to render from the already-fetched enumeration. This is not sent to Tonal.',
+        },
+      },
+      required: [],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: listWorkoutActivities,
   },
   {
     name: 'list_custom_workouts',
