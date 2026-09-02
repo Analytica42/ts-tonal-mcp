@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type TonalClient from '@dlwiest/ts-tonal-client';
-import type {
-  TonalStrengthScore,
-  TonalStrengthScoreHistoryEntry,
-} from '@dlwiest/ts-tonal-client';
+import type { TonalWorkoutActivity } from '@dlwiest/ts-tonal-client';
 import { listWorkoutActivities } from '../src/tools/workout-activities.js';
 import { toolsRegistry } from '../src/tools/registry.js';
 import type { MCPResponse } from '../src/types/index.js';
@@ -19,89 +16,76 @@ function reportText(response: MCPResponse): string {
   return content.text;
 }
 
-function historyEntry(
-  index: number,
-  activityTime: string
-): TonalStrengthScoreHistoryEntry {
+function activity(
+  id: string,
+  beginTime: string,
+  overrides: Partial<TonalWorkoutActivity> = {}
+): TonalWorkoutActivity {
   return {
-    id: `history-row-${index}`,
+    id,
     userId: 'user-1',
-    workoutActivityId: `activity-${index}`,
-    upper: 100 + index,
-    lower: 200 + index,
-    core: 300 + index,
-    overall: 400 + index,
-    activityTime,
+    workoutId: `workout-${id}`,
+    beginTime,
+    endTime: beginTime,
+    totalDuration: 600,
+    activeDuration: 120,
+    totalSets: 3,
+    totalReps: 30,
+    totalVolume: 1_500,
+    completed: true,
+    workoutSetActivity: [],
+    ...overrides,
   };
 }
 
-function recordingClient(history: TonalStrengthScoreHistoryEntry[]): {
+function recordingClient(activities: TonalWorkoutActivity[]): {
   client: TonalClient;
   calls: unknown[][];
 } {
   const calls: unknown[][] = [];
   return {
     client: fakeClient({
-      getStrengthScoreHistory: async (...args: unknown[]) => {
+      getWorkoutActivities: async (...args: unknown[]) => {
         calls.push(args);
-        return history;
+        return activities;
       },
     }),
     calls,
   };
 }
 
-// This fixture intentionally omits optional familyActivity. Since npm run typecheck includes
-// tests, tightening the published client type incorrectly would fail this suite at compile time.
-const SPARSE_STRENGTH_SCORE: TonalStrengthScore = {
-  id: 'overall-score',
-  createdAt: '2026-08-31T12:00:00Z',
-  updatedAt: '0001-01-01T00:00:00Z',
-  userId: 'user-1',
-  workoutActivityId: '00000000-0000-0000-0000-000000000000',
-  strengthBodyRegion: 'Overall',
-  bodyRegionDisplay: '',
-  score: 400,
-  current: true,
-};
-
-const HISTORY = [
-  historyEntry(1, '2026-08-10T12:00:00Z'),
-  historyEntry(2, '2026-08-30T12:00:00Z'),
-  historyEntry(3, '2026-08-20T12:00:00Z'),
+const ACTIVITIES = [
+  activity('activity-1', '2026-08-10T12:00:00Z'),
+  activity('activity-2', '2026-08-30T12:00:00Z', {
+    totalSets: 5,
+    totalReps: 42,
+    totalVolume: 2_400,
+  }),
+  activity('activity-3', '2026-08-20T12:00:00Z'),
 ];
 
-test('keeps the sparse optional client field fixture typechecked', () => {
-  assert.equal('familyActivity' in SPARSE_STRENGTH_SCORE, false);
-});
-
-test('registers list_workout_activities with the approved schema and annotations', () => {
+test('registers list_workout_activities with real API paging and read-only annotations', () => {
   const tool = toolsRegistry.get('list_workout_activities');
   assert.ok(tool);
   assert.equal(
     tool.description,
-    'Enumerate performed activity IDs and dates from Strength Score history so a specific activity can be inspected. Tonal is queried once; paging parameters affect presentation only.'
+    "List one Tonal workout-activity API page. Offset 0 selects the account's oldest activities and increasing offset advances toward newer ones; rows are displayed newest-first only within the selected page. Use get_recent_workouts for recent sessions."
   );
   assert.deepEqual(tool.inputSchema, {
     type: 'object',
     properties: {
-      days: {
-        type: 'integer',
-        minimum: 1,
-        description: 'Calendar-day enumeration lookback, not a row count. Omit to query from account creation.',
-      },
-      startIndex: {
+      offset: {
         type: 'integer',
         minimum: 0,
         default: 0,
-        description: 'Number of newest-first enumeration rows to skip in the rendered result. This is local presentation paging, not a Tonal API offset.',
+        description: 'Tonal API offset into the oldest-first activity sequence.',
       },
-      pageSize: {
+      limit: {
         type: 'integer',
         minimum: 1,
-        maximum: 50,
+        maximum: 100,
         default: 20,
-        description: 'Maximum rows to render from the already-fetched enumeration. This is not sent to Tonal.',
+        description: 'Maximum activities requested from Tonal for this API page.',
       },
     },
     required: [],
@@ -110,123 +94,117 @@ test('registers list_workout_activities with the approved schema and annotations
   assert.equal(tool.annotations?.destructiveHint, false);
 });
 
-test('makes exactly one history call per invocation and keeps presentation paging local', async () => {
-  const { client, calls } = recordingClient(HISTORY);
-
-  await listWorkoutActivities(client, { startIndex: 0, pageSize: 1 });
-  await listWorkoutActivities(client, { startIndex: 1, pageSize: 2 });
-  await listWorkoutActivities(client, { days: 45, startIndex: 999, pageSize: 50 });
-
-  assert.deepEqual(calls, [['all'], ['all'], [45]]);
-});
-
-test("passes days unchanged and uses 'all' when days is omitted", async () => {
+test('sends offset and limit to getWorkoutActivities with honest defaults', async () => {
   const { client, calls } = recordingClient([]);
 
-  await listWorkoutActivities(client, { days: 37 });
-  await listWorkoutActivities(client, {});
   await listWorkoutActivities(client);
+  await listWorkoutActivities(client, { offset: 40, limit: 100 });
 
-  assert.deepEqual(calls, [[37], ['all'], ['all']]);
+  assert.deepEqual(calls, [[0, 20], [40, 100]]);
 });
 
-test('sorts newest first while reporting discovery count and pre-slice boundaries', async () => {
-  const { client } = recordingClient(HISTORY);
+test('sorts the returned oldest-first API page newest-first without changing its membership', async () => {
+  const { client } = recordingClient(ACTIVITIES);
   const text = reportText(
-    await listWorkoutActivities(client, { days: 365, startIndex: 0, pageSize: 2 })
+    await listWorkoutActivities(client, { offset: 20, limit: 3 })
   );
-
-  assert.match(text, /Source: strength-score-history/);
-  assert.match(text, /Requested lookback: 365 calendar days/);
-  assert.match(text, /Discovered activities: 3/);
-  assert.match(text, /Earliest activity: 2026-08-10T12:00:00Z/);
-  assert.match(text, /Latest activity: 2026-08-30T12:00:00Z/);
-  assert.match(text, /Showing 0\.\.1 of 3/);
-  assert.match(text, /Presentation truncated: yes/);
-  assert.match(text, /nextStartIndex: 2/);
 
   const newestPosition = text.indexOf('2026-08-30T12:00:00Z | workoutActivityId activity-2');
-  const secondPosition = text.indexOf('2026-08-20T12:00:00Z | workoutActivityId activity-3');
+  const middlePosition = text.indexOf('2026-08-20T12:00:00Z | workoutActivityId activity-3');
+  const oldestPosition = text.indexOf('2026-08-10T12:00:00Z | workoutActivityId activity-1');
   assert.ok(newestPosition >= 0);
-  assert.ok(secondPosition > newestPosition);
-  assert.doesNotMatch(text, /workoutActivityId activity-1/);
-  assert.match(text, /Overall 402 \| Upper 102 \| Core 302 \| Lower 202/);
-  assert.match(text, /completeness is relative to activity IDs emitted by Tonal strength-score history/i);
-  assert.doesNotMatch(text, /history-row-|user-1|```json/);
+  assert.ok(middlePosition > newestPosition);
+  assert.ok(oldestPosition > middlePosition);
+  assert.match(text, /Sets 5 \| Reps 42 \| Volume 2,400 lb/);
 });
 
-test('includes nextStartIndex only when a further page exists', async () => {
-  const first = recordingClient(HISTORY);
-  const firstText = reportText(
-    await listWorkoutActivities(first.client, { startIndex: 0, pageSize: 2 })
-  );
-  assert.match(firstText, /nextStartIndex: 2/);
+test('states that API page selection and display use opposite orderings', async () => {
+  const { client } = recordingClient(ACTIVITIES);
+  const text = reportText(await listWorkoutActivities(client));
 
-  const last = recordingClient(HISTORY);
-  const lastText = reportText(
-    await listWorkoutActivities(last.client, { startIndex: 2, pageSize: 2 })
-  );
-  assert.match(lastText, /Showing 2\.\.2 of 3/);
-  assert.doesNotMatch(lastText, /nextStartIndex/);
-  assert.equal(first.calls.length, 1);
-  assert.equal(last.calls.length, 1);
+  assert.match(text, /API offset: 0/);
+  assert.match(text, /API limit: 20/);
+  assert.match(text, /API page selection: oldest-first/);
+  assert.match(text, /Display order: newest-first within this API-selected page only/);
 });
 
-test('returns an explicit empty page with no nextStartIndex beyond the end', async () => {
-  const { client, calls } = recordingClient(HISTORY);
-  const text = reportText(
-    await listWorkoutActivities(client, { startIndex: 10, pageSize: 5 })
-  );
+test('identifies offset zero as oldest and reports the selected page date range', async () => {
+  const tool = toolsRegistry.get('list_workout_activities');
+  assert.ok(tool);
+  assert.match(tool.description, /Offset 0 selects the account's oldest activities/);
+  assert.match(tool.description, /increasing offset advances toward newer ones/);
+  assert.match(tool.description, /Use get_recent_workouts for recent sessions/);
 
-  assert.match(text, /Showing: empty page at startIndex 10 of 3/);
-  assert.match(text, /No activity rows in this presentation page/);
-  assert.match(text, /Presentation truncated: yes/);
-  assert.doesNotMatch(text, /nextStartIndex/);
-  assert.deepEqual(calls, [['all']]);
+  const { client } = recordingClient(ACTIVITIES);
+  const text = reportText(await listWorkoutActivities(client));
+
+  assert.match(text, /offset 0 requests the account's oldest activities/);
+  assert.match(text, /increasing offset advances toward newer activities/);
+  assert.match(
+    text,
+    /Page beginTime range: 2026-08-10T12:00:00Z \(oldest\) to 2026-08-30T12:00:00Z \(newest\)/
+  );
+  assert.match(text, /For the account's recent workouts, use get_recent_workouts/);
 });
 
-test('reports an explicit untruncated empty page for an empty discovery set', async () => {
+test('offers a possible next offset only when Tonal returns a full page', async () => {
+  const fullPage = recordingClient(ACTIVITIES.slice(0, 2));
+  const fullText = reportText(
+    await listWorkoutActivities(fullPage.client, { offset: 10, limit: 2 })
+  );
+  assert.match(fullText, /nextOffset: 12 \(the full page means additional activities may exist\)/);
+
+  const shortPage = recordingClient(ACTIVITIES.slice(0, 1));
+  const shortText = reportText(
+    await listWorkoutActivities(shortPage.client, { offset: 10, limit: 2 })
+  );
+  assert.doesNotMatch(shortText, /nextOffset/);
+});
+
+test('reports an explicit empty API page', async () => {
   const { client } = recordingClient([]);
-  const text = reportText(await listWorkoutActivities(client, {}));
+  const text = reportText(
+    await listWorkoutActivities(client, { offset: 500, limit: 20 })
+  );
 
-  assert.match(text, /Discovered activities: 0/);
-  assert.match(text, /Earliest activity: none/);
-  assert.match(text, /Latest activity: none/);
-  assert.match(text, /Showing: empty page at startIndex 0 of 0/);
-  assert.match(text, /Presentation truncated: no/);
-  assert.doesNotMatch(text, /nextStartIndex/);
+  assert.match(text, /Activities returned: 0/);
+  assert.match(text, /No workout activities found at this API offset/);
+  assert.doesNotMatch(text, /nextOffset/);
 });
 
-test('rejects every invalid argument before making a client call', async (t) => {
+test('turns a workout activity API failure into an MCP error response', async () => {
+  const response = await listWorkoutActivities(fakeClient({
+    getWorkoutActivities: async () => {
+      throw new Error('activity endpoint unavailable');
+    },
+  }));
+
+  assert.equal(response.isError, true);
+  assert.match(reportText(response), /activity endpoint unavailable/);
+});
+
+test('rejects every invalid paging argument before making a client call', async (t) => {
   const invalidCases: Array<{ name: string; args: Record<string, unknown> }> = [
-    { name: 'days zero', args: { days: 0 } },
-    { name: 'days negative', args: { days: -1 } },
-    { name: 'days fractional', args: { days: 1.5 } },
-    { name: 'days NaN', args: { days: Number.NaN } },
-    { name: 'days infinite', args: { days: Number.POSITIVE_INFINITY } },
-    { name: 'days unsafe', args: { days: Number.MAX_SAFE_INTEGER + 1 } },
-    { name: 'days string', args: { days: '30' } },
-    { name: 'days null', args: { days: null } },
-    { name: 'startIndex negative', args: { startIndex: -1 } },
-    { name: 'startIndex fractional', args: { startIndex: 1.5 } },
-    { name: 'startIndex NaN', args: { startIndex: Number.NaN } },
-    { name: 'startIndex infinite', args: { startIndex: Number.POSITIVE_INFINITY } },
-    { name: 'startIndex unsafe', args: { startIndex: Number.MAX_SAFE_INTEGER + 1 } },
-    { name: 'startIndex string', args: { startIndex: '0' } },
-    { name: 'startIndex null', args: { startIndex: null } },
-    { name: 'pageSize zero', args: { pageSize: 0 } },
-    { name: 'pageSize too large', args: { pageSize: 51 } },
-    { name: 'pageSize fractional', args: { pageSize: 1.5 } },
-    { name: 'pageSize NaN', args: { pageSize: Number.NaN } },
-    { name: 'pageSize infinite', args: { pageSize: Number.POSITIVE_INFINITY } },
-    { name: 'pageSize unsafe', args: { pageSize: Number.MAX_SAFE_INTEGER + 1 } },
-    { name: 'pageSize string', args: { pageSize: '20' } },
-    { name: 'pageSize null', args: { pageSize: null } },
+    { name: 'offset negative', args: { offset: -1 } },
+    { name: 'offset fractional', args: { offset: 1.5 } },
+    { name: 'offset NaN', args: { offset: Number.NaN } },
+    { name: 'offset infinite', args: { offset: Number.POSITIVE_INFINITY } },
+    { name: 'offset unsafe', args: { offset: Number.MAX_SAFE_INTEGER + 1 } },
+    { name: 'offset string', args: { offset: '0' } },
+    { name: 'offset null', args: { offset: null } },
+    { name: 'limit zero', args: { limit: 0 } },
+    { name: 'limit too large', args: { limit: 101 } },
+    { name: 'limit fractional', args: { limit: 1.5 } },
+    { name: 'limit NaN', args: { limit: Number.NaN } },
+    { name: 'limit infinite', args: { limit: Number.POSITIVE_INFINITY } },
+    { name: 'limit unsafe', args: { limit: Number.MAX_SAFE_INTEGER + 1 } },
+    { name: 'limit string', args: { limit: '20' } },
+    { name: 'limit null', args: { limit: null } },
   ];
 
   for (const invalidCase of invalidCases) {
     await t.test(invalidCase.name, async () => {
-      const { client, calls } = recordingClient(HISTORY);
+      const { client, calls } = recordingClient(ACTIVITIES);
       const response = await listWorkoutActivities(client, invalidCase.args);
 
       assert.equal(response.isError, true);

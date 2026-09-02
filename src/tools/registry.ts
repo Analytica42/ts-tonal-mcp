@@ -13,6 +13,7 @@ import { getGoalMetrics } from './goal-metrics.js';
 import { getStrengthScores } from './strength-scores.js';
 import { estimateWorkoutDuration } from './workout-duration.js';
 import { listWorkoutActivities } from './workout-activities.js';
+import { getWorkoutActivityDetails, getWorkoutSummary } from './workout-activity-details.js';
 
 const setDetailsSchema = {
   type: 'array',
@@ -188,7 +189,7 @@ const fitnessTools: MCPToolDefinition[] = [
 const workoutTools: MCPToolDefinition[] = [
   {
     name: 'get_recent_workouts',
-    description: 'Get recent workout history with summary stats',
+    description: 'Get recent workout history with wall-clock and time-under-tension stats plus workoutActivityId values for activity detail or summary lookup',
     inputSchema: {
       type: 'object',
       properties: {
@@ -207,27 +208,22 @@ const workoutTools: MCPToolDefinition[] = [
   },
   {
     name: 'list_workout_activities',
-    description: 'Enumerate performed activity IDs and dates from Strength Score history so a specific activity can be inspected. Tonal is queried once; paging parameters affect presentation only.',
+    description: "List one Tonal workout-activity API page. Offset 0 selects the account's oldest activities and increasing offset advances toward newer ones; rows are displayed newest-first only within the selected page. Use get_recent_workouts for recent sessions.",
     inputSchema: {
       type: 'object',
       properties: {
-        days: {
-          type: 'integer',
-          minimum: 1,
-          description: 'Calendar-day enumeration lookback, not a row count. Omit to query from account creation.',
-        },
-        startIndex: {
+        offset: {
           type: 'integer',
           minimum: 0,
           default: 0,
-          description: 'Number of newest-first enumeration rows to skip in the rendered result. This is local presentation paging, not a Tonal API offset.',
+          description: 'Tonal API offset into the oldest-first activity sequence.',
         },
-        pageSize: {
+        limit: {
           type: 'integer',
           minimum: 1,
-          maximum: 50,
+          maximum: 100,
           default: 20,
-          description: 'Maximum rows to render from the already-fetched enumeration. This is not sent to Tonal.',
+          description: 'Maximum activities requested from Tonal for this API page.',
         },
       },
       required: [],
@@ -237,6 +233,44 @@ const workoutTools: MCPToolDefinition[] = [
       destructiveHint: false,
     },
     handler: listWorkoutActivities,
+  },
+  {
+    name: 'get_workout_activity_details',
+    description: 'Get one completed activity with performed sets in original order, catalog-resolved movement names, per-set weights, reps, one-rep max, volume, and range of motion. Activity summary IDs from get_recent_workouts are the same workout activity IDs accepted here. Reports totalDuration as wall-clock time and activeDuration as time under tension.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        activityId: {
+          type: 'string',
+          description: 'Workout activity ID returned by list_workout_activities.',
+        },
+      },
+      required: ['activityId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: getWorkoutActivityDetails,
+  },
+  {
+    name: 'get_workout_summary',
+    description: "Get Tonal's formatted workout summary and per-movement breakdown. Activity summary IDs from get_recent_workouts are the same workout activity IDs accepted here. Reports duration as wall-clock session time and timeUnderTension as active lifting time.",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        activityId: {
+          type: 'string',
+          description: 'Workout activity ID returned by list_workout_activities.',
+        },
+      },
+      required: ['activityId'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: getWorkoutSummary,
   },
   {
     name: 'list_custom_workouts',

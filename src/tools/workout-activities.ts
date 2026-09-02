@@ -1,12 +1,11 @@
 import TonalClient from '@dlwiest/ts-tonal-client';
-import type { TonalStrengthScoreHistoryEntry } from '@dlwiest/ts-tonal-client';
+import type { TonalWorkoutActivity } from '@dlwiest/ts-tonal-client';
 import { MCPResponse } from '../types/index.js';
 import { handleToolError, TonalMCPError } from '../utils/error-handler.js';
-import { validateOptionalPositiveInteger } from '../utils/validation.js';
 
-const DEFAULT_START_INDEX = 0;
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGE_SIZE = 50;
+const DEFAULT_OFFSET = 0;
+const DEFAULT_LIMIT = 20;
+const MAX_LIMIT = 100;
 
 function validateOptionalIntegerInRange(
   value: unknown,
@@ -37,17 +36,11 @@ function validateOptionalIntegerInRange(
   return value;
 }
 
-function formatScore(value: number): string {
-  return Number.isInteger(value)
-    ? String(value)
-    : value.toFixed(2).replace(/\.0+$|(?<=\.\d)0+$/, '');
-}
-
 function sortNewestFirst(
-  history: TonalStrengthScoreHistoryEntry[]
-): TonalStrengthScoreHistoryEntry[] {
-  return [...history].sort(
-    (left, right) => Date.parse(right.activityTime) - Date.parse(left.activityTime)
+  activities: TonalWorkoutActivity[]
+): TonalWorkoutActivity[] {
+  return [...activities].sort(
+    (left, right) => Date.parse(right.beginTime) - Date.parse(left.beginTime)
   );
 }
 
@@ -56,63 +49,48 @@ export async function listWorkoutActivities(
   args?: Record<string, unknown>
 ): Promise<MCPResponse> {
   try {
-    const days = validateOptionalPositiveInteger(args?.days, 'days');
-    const startIndex = validateOptionalIntegerInRange(
-      args?.startIndex,
-      'startIndex',
+    const offset = validateOptionalIntegerInRange(
+      args?.offset,
+      'offset',
       0
-    ) ?? DEFAULT_START_INDEX;
-    const pageSize = validateOptionalIntegerInRange(
-      args?.pageSize,
-      'pageSize',
+    ) ?? DEFAULT_OFFSET;
+    const limit = validateOptionalIntegerInRange(
+      args?.limit,
+      'limit',
       1,
-      MAX_PAGE_SIZE
-    ) ?? DEFAULT_PAGE_SIZE;
-    const lookback = days ?? 'all';
+      MAX_LIMIT
+    ) ?? DEFAULT_LIMIT;
 
-    const history = await client.getStrengthScoreHistory(lookback);
-    const orderedHistory = sortNewestFirst(history);
-    const discoveredCount = orderedHistory.length;
-    const displayedHistory = orderedHistory.slice(startIndex, startIndex + pageSize);
-    const hasNextPage = startIndex + displayedHistory.length < discoveredCount;
-    const presentationTruncated = displayedHistory.length < discoveredCount;
+    const activities = await client.getWorkoutActivities(offset, limit);
+    const orderedActivities = sortNewestFirst(activities);
 
-    let report = '# Workout Activity Enumeration\n\n';
-    report += '- Source: strength-score-history\n';
-    report += days === undefined
-      ? '- Requested lookback: all available strength-score history from account creation\n'
-      : `- Requested lookback: ${days} calendar days\n`;
-    report += `- Discovered activities: ${discoveredCount}\n`;
+    let report = '# Workout Activities\n\n';
+    report += '- Source: workout-activities\n';
+    report += `- API offset: ${offset}\n`;
+    report += `- API limit: ${limit}\n`;
+    report += `- Activities returned: ${orderedActivities.length}\n`;
+    report += "- API page selection: oldest-first; offset 0 requests the account's oldest activities, and increasing offset advances toward newer activities\n";
+    report += '- Display order: newest-first within this API-selected page only\n';
+    report += "- For the account's recent workouts, use get_recent_workouts\n";
 
-    if (discoveredCount === 0) {
-      report += '- Earliest activity: none\n';
-      report += '- Latest activity: none\n';
+    if (orderedActivities.length === 0) {
+      report += '- Page beginTime range: none\n';
     } else {
-      report += `- Earliest activity: ${orderedHistory[discoveredCount - 1].activityTime}\n`;
-      report += `- Latest activity: ${orderedHistory[0].activityTime}\n`;
+      report += `- Page beginTime range: ${orderedActivities[orderedActivities.length - 1].beginTime} (oldest) to ${orderedActivities[0].beginTime} (newest)\n`;
     }
 
-    if (displayedHistory.length === 0) {
-      report += `- Showing: empty page at startIndex ${startIndex} of ${discoveredCount}\n`;
-    } else {
-      const endIndex = startIndex + displayedHistory.length - 1;
-      report += `- Showing ${startIndex}..${endIndex} of ${discoveredCount}\n`;
-    }
-    report += `- Presentation truncated: ${presentationTruncated ? 'yes' : 'no'}\n`;
-    if (hasNextPage) {
-      report += `- nextStartIndex: ${startIndex + displayedHistory.length}\n`;
+    if (activities.length === limit) {
+      report += `- nextOffset: ${offset + activities.length} (the full page means additional activities may exist)\n`;
     }
 
     report += '\n## Activities\n';
-    if (displayedHistory.length === 0) {
-      report += 'No activity rows in this presentation page.\n';
+    if (orderedActivities.length === 0) {
+      report += 'No workout activities found at this API offset.\n';
     } else {
-      for (const activity of displayedHistory) {
-        report += `- ${activity.activityTime} | workoutActivityId ${activity.workoutActivityId} | Overall ${formatScore(activity.overall)} | Upper ${formatScore(activity.upper)} | Core ${formatScore(activity.core)} | Lower ${formatScore(activity.lower)}\n`;
+      for (const activity of orderedActivities) {
+        report += `- ${activity.beginTime} | workoutActivityId ${activity.id} | Sets ${activity.totalSets} | Reps ${activity.totalReps} | Volume ${activity.totalVolume.toLocaleString()} lb\n`;
       }
     }
-
-    report += '\nCaveat: completeness is relative to activity IDs emitted by Tonal strength-score history for the requested lookback.\n';
 
     return {
       content: [{ type: 'text' as const, text: report }],
