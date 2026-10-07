@@ -283,3 +283,128 @@ test('passes a trimmed activity ID to summary retrieval and maps failures to isE
   assert.equal(response.isError, true);
   assert.match(reportText(response), /summary unavailable/);
 });
+
+// --- Absolute-weight field reporting -------------------------------------
+// Tonal's write type accepts only weightPercentage, so the read path must
+// report every absolute-weight field the API returns, distinguishing a real 0
+// from a field Tonal did not send.
+
+function weightSetSection(text: string, index: number): string {
+  const heading = `### Set ${index + 1}: `;
+  const headingPosition = text.indexOf(heading);
+  assert.ok(headingPosition >= 0, `missing ${heading}`);
+  const nextHeadingPosition = text.indexOf('### Set ', headingPosition + heading.length);
+  return text.slice(
+    headingPosition,
+    nextHeadingPosition === -1 ? undefined : nextHeadingPosition
+  );
+}
+
+async function weightReport(set: Record<string, unknown>): Promise<string> {
+  return reportText(await getWorkoutActivityDetails(fakeClient({
+    getWorkoutActivityById: async () => ({
+      ...DETAIL,
+      workoutSetActivity: [{ movementId: 'movement-bench', ...set }],
+    }),
+    getMovements: async () => MOVEMENTS,
+  }), { activityId: 'activity-42' }));
+}
+
+test('reports every absolute-weight field at the precision Tonal returned', async () => {
+  const section = weightSetSection(await weightReport({
+    setGroup: 2,
+    blockNumber: 1,
+    repCount: 5,
+    avgWeight: 63.42,
+    baseWeight: 71,
+    weightPercentage: 65.5,
+    oneRepMax: 109.25,
+    suggestedWeight: 73,
+    suggestedWeightChange: 2.5,
+    minWeight: 70,
+    maxWeight: 74.75,
+    totalOnMachineVolume: 317.1,
+    romLengthIn: 24,
+  }), 0);
+
+  assert.match(section, /- Average weight \(avgWeight\): 63\.42 lb/);
+  assert.match(section, /- Base weight \(baseWeight\): 71 lb/);
+  assert.match(section, /- Weight percentage \(weightPercentage\): 65\.5 %/);
+  assert.match(section, /- One-rep max \(oneRepMax\): 109\.25 lb/);
+  assert.match(section, /- Suggested weight \(suggestedWeight\): 73 lb/);
+  assert.match(section, /- Suggested weight change \(suggestedWeightChange\): 2\.5 lb/);
+  assert.match(section, /- Minimum weight \(minWeight\): 70 lb/);
+  assert.match(section, /- Maximum weight \(maxWeight\): 74\.75 lb/);
+  // The pounds-to-percentage relationship is the caller's to derive: the report
+  // must not present a computed oneRepMax * pct / 100 as if Tonal measured it.
+  assert.doesNotMatch(section, /71\.5[0-9]* lb/);
+});
+
+test('marks each absolute-weight field absent when Tonal omits it entirely', async () => {
+  const section = weightSetSection(await weightReport({ repCount: 5 }), 0);
+
+  for (const field of [
+    'Base weight \\(baseWeight\\)',
+    'Weight percentage \\(weightPercentage\\)',
+    'One-rep max \\(oneRepMax\\)',
+    'Suggested weight \\(suggestedWeight\\)',
+    'Suggested weight change \\(suggestedWeightChange\\)',
+    'Minimum weight \\(minWeight\\)',
+    'Maximum weight \\(maxWeight\\)',
+  ]) {
+    assert.match(section, new RegExp(`- ${field}: not reported`));
+  }
+  assert.doesNotMatch(section, /: 0 (lb|%)/);
+});
+
+test('marks an explicitly null base weight or weight percentage absent, not zero', async () => {
+  const section = weightSetSection(await weightReport({
+    repCount: 5,
+    baseWeight: null,
+    weightPercentage: null,
+  }), 0);
+
+  assert.match(section, /- Base weight \(baseWeight\): not reported/);
+  assert.match(section, /- Weight percentage \(weightPercentage\): not reported/);
+});
+
+test('renders a real zero base weight, percentage, and weight change as 0', async () => {
+  const section = weightSetSection(await weightReport({
+    repCount: 5,
+    avgWeight: 0,
+    baseWeight: 0,
+    weightPercentage: 0,
+    suggestedWeightChange: 0,
+    minWeight: 0,
+    maxWeight: 0,
+  }), 0);
+
+  assert.match(section, /- Average weight \(avgWeight\): 0 lb/);
+  assert.match(section, /- Base weight \(baseWeight\): 0 lb/);
+  assert.match(section, /- Weight percentage \(weightPercentage\): 0 %/);
+  assert.match(section, /- Suggested weight change \(suggestedWeightChange\): 0 lb/);
+  assert.match(section, /- Minimum weight \(minWeight\): 0 lb/);
+  assert.match(section, /- Maximum weight \(maxWeight\): 0 lb/);
+  // A zero must never be suppressed or defaulted into the absent marker.
+  assert.doesNotMatch(section, /- Base weight \(baseWeight\): not reported/);
+  assert.doesNotMatch(section, /- Weight percentage \(weightPercentage\): not reported/);
+  assert.doesNotMatch(section, /- Suggested weight change \(suggestedWeightChange\): not reported/);
+});
+
+test('reports absolute-weight fields for every set, not just the first', async () => {
+  const text = reportText(await getWorkoutActivityDetails(fakeClient({
+    getWorkoutActivityById: async () => ({
+      ...DETAIL,
+      workoutSetActivity: [
+        { movementId: 'movement-bench', baseWeight: 71, weightPercentage: 65 },
+        { movementId: 'movement-bench', baseWeight: 0, weightPercentage: 0 },
+        { movementId: 'movement-bench' },
+      ],
+    }),
+    getMovements: async () => MOVEMENTS,
+  }), { activityId: 'activity-42' }));
+
+  assert.match(weightSetSection(text, 0), /- Base weight \(baseWeight\): 71 lb/);
+  assert.match(weightSetSection(text, 1), /- Base weight \(baseWeight\): 0 lb/);
+  assert.match(weightSetSection(text, 2), /- Base weight \(baseWeight\): not reported/);
+});

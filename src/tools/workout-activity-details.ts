@@ -70,7 +70,13 @@ export async function getWorkoutActivityDetails(
         report += `- Block number (blockNumber): ${formatMetric(set.blockNumber)}\n`;
         report += `- Reps (repCount): ${formatMetric(set.repCount)}\n`;
         report += `- Average weight (avgWeight): ${formatMetric(set.avgWeight, 'lb')}\n`;
+        report += `- Base weight (baseWeight): ${formatMetric(set.baseWeight, 'lb')}\n`;
+        report += `- Weight percentage (weightPercentage): ${formatMetric(set.weightPercentage, '%')}\n`;
         report += `- One-rep max (oneRepMax): ${formatMetric(set.oneRepMax, 'lb')}\n`;
+        report += `- Suggested weight (suggestedWeight): ${formatMetric(set.suggestedWeight, 'lb')}\n`;
+        report += `- Suggested weight change (suggestedWeightChange): ${formatMetric(set.suggestedWeightChange, 'lb')}\n`;
+        report += `- Minimum weight (minWeight): ${formatMetric(set.minWeight, 'lb')}\n`;
+        report += `- Maximum weight (maxWeight): ${formatMetric(set.maxWeight, 'lb')}\n`;
         report += `- On-machine volume (totalOnMachineVolume): ${formatMetric(set.totalOnMachineVolume, 'lb')}\n`;
         report += `- Range of motion (romLengthIn): ${formatMetric(set.romLengthIn, 'in')}\n`;
       });
