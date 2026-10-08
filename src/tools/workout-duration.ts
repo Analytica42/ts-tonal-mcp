@@ -15,6 +15,8 @@ export async function estimateWorkoutDuration(
     validateWorkoutExercises(exercises);
 
     const movements = await client.getMovements();
+    // No requireMeasuredFactor here, deliberately: this tool commits nothing, and the
+    // conversion section it prints carries the doubling warning for an inferred factor.
     const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
     const { sets, conversions } = exercisesToSetsDetailed(exercises, movements, {
       loadReferences,

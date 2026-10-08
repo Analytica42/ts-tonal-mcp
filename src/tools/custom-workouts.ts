@@ -277,7 +277,11 @@ export async function createWorkout(
     const movements = await client.getMovements();
     // Resolve pound references before the mutation: an unresolvable oneRepMax must fail the
     // request outright rather than create a workout with half its load converted.
-    const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
+    // requireMeasuredFactor additionally refuses an accessory whose factor was never read off
+    // a trainer -- a written load is committed where its warning may never be read.
+    const loadReferences = await resolveLoadReferencesForExercises(client, exercises, {
+      requireMeasuredFactor: true,
+    });
     const { sets, conversions } = exercisesToSetsDetailed(exercises, movements, {
       loadReferences,
     });

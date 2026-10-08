@@ -136,8 +136,11 @@ export async function updateWorkout(
     const detailedWorkout = await client.getWorkoutById(originalWorkout.id);
     const movements = await client.getMovements();
     // Resolve pound references before the mutation, so a missing oneRepMax cannot overwrite
-    // an existing workout with partially converted load.
-    const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
+    // an existing workout with partially converted load. requireMeasuredFactor additionally
+    // refuses an accessory whose factor was never read off a trainer.
+    const loadReferences = await resolveLoadReferencesForExercises(client, exercises, {
+      requireMeasuredFactor: true,
+    });
     const { sets: newSets, conversions } = exercisesToSetsDetailed(exercises, movements, {
       loadReferences,
     });

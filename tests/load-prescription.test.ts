@@ -33,7 +33,7 @@ const BENCH: TonalMovement = {
   onMachine: true,
   isBilateral: true,
   isTwoSided: false,
-  onMachineInfo: { trainerArmsPulledAtSameTime: true },
+  onMachineInfo: { accessory: 'StraightBar', trainerArmsPulledAtSameTime: true },
 } as unknown as TonalMovement;
 
 const ROW: TonalMovement = {
@@ -43,11 +43,34 @@ const ROW: TonalMovement = {
   onMachine: true,
   isBilateral: false,
   isTwoSided: true,
-  onMachineInfo: { trainerArmsPulledAtSameTime: false },
+  onMachineInfo: { accessory: 'Handles', trainerArmsPulledAtSameTime: false },
 } as unknown as TonalMovement;
 
-// The single-cable calibration movement: oneRepMax 104.21186002414206, trainer read
-// 26/52/78 lb at pct 25/50/75, which resolves the single-cable class at factor 1.
+// Handles WITH trainerArmsPulledAtSameTime true: the falsifying pairing, and the shape of
+// 140 of the 236 on-machine movements. The previous model prescribed every one of these at
+// half the intended load.
+const LATERAL_RAISE: TonalMovement = {
+  id: 'm-lateral-raise',
+  name: 'Lateral Raise',
+  countReps: true,
+  onMachine: true,
+  isBilateral: true,
+  isTwoSided: false,
+  onMachineInfo: { accessory: 'Handles', trainerArmsPulledAtSameTime: true },
+} as unknown as TonalMovement;
+
+// The only unmeasured accessory: resolves at factor 1, flagged as inferred.
+const PILATES: TonalMovement = {
+  id: 'm-pilates',
+  name: 'Loop Leg Circle',
+  countReps: true,
+  onMachine: true,
+  isBilateral: false,
+  onMachineInfo: { accessory: 'PilatesLoops' },
+} as unknown as TonalMovement;
+
+// The AnkleStraps calibration movement: oneRepMax 104.21186002414206, trainer read
+// 26/52/78 lb at pct 25/50/75, which resolves AnkleStraps at factor 1.
 const LEG_EXTENSION: TonalMovement = {
   id: 'm-leg-extension',
   name: 'Standing Leg Extension',
@@ -55,7 +78,7 @@ const LEG_EXTENSION: TonalMovement = {
   onMachine: true,
   isBilateral: true,
   isTwoSided: false,
-  onMachineInfo: { trainerArmsPulledAtSameTime: false },
+  onMachineInfo: { accessory: 'AnkleStraps', trainerArmsPulledAtSameTime: false },
 } as unknown as TonalMovement;
 
 const LEG_EXTENSION_ONE_REP_MAX = 104.21186002414206;
@@ -67,9 +90,8 @@ const REST: TonalMovement = {
   isBilateral: true,
 } as unknown as TonalMovement;
 
-// No cable attribute and onMachine false -- the shape every one of the 125 attribute-less
-// catalog movements has. isBilateral is present and true, which a limb-based fallback would
-// have happily converted at factor 2.
+// No onMachineInfo and onMachine false -- the shape every off-machine catalog movement has.
+// isBilateral is present and true, which a limb-based fallback would have converted at 2.
 const PLANK: TonalMovement = {
   id: 'm-plank',
   name: 'Plank',
@@ -84,7 +106,17 @@ const UNTRAINED: TonalMovement = {
   countReps: true,
   onMachine: true,
   isBilateral: true,
-  onMachineInfo: { trainerArmsPulledAtSameTime: true },
+  onMachineInfo: { accessory: 'Handles', trainerArmsPulledAtSameTime: true },
+} as unknown as TonalMovement;
+
+// An accessory no trainer reading covers and no registry entry names.
+const UNKNOWN_ACCESSORY: TonalMovement = {
+  id: 'm-unknown-accessory',
+  name: 'Mystery Press',
+  countReps: true,
+  onMachine: true,
+  isBilateral: true,
+  onMachineInfo: { accessory: 'TricepsBar' },
 } as unknown as TonalMovement;
 
 interface ActivityFixture {
@@ -102,7 +134,17 @@ function stubClient(
   const counters = { summaryFetches: 0 };
 
   const client = {
-    getMovements: async () => [BENCH, ROW, LEG_EXTENSION, REST, UNTRAINED, PLANK],
+    getMovements: async () => [
+      BENCH,
+      ROW,
+      LATERAL_RAISE,
+      PILATES,
+      LEG_EXTENSION,
+      REST,
+      UNTRAINED,
+      UNKNOWN_ACCESSORY,
+      PLANK,
+    ],
     getActivitySummaries: async () => {
       counters.summaryFetches += 1;
       // Reversed on purpose: resolution must sort by timestamp, not trust API order.
@@ -340,7 +382,7 @@ test('get_load_reference reports the factor, denominator, granularity and verifi
   assert.doesNotMatch(text, /Unverified Cable Factor/);
 });
 
-test('get_load_reference resolves a single-cable movement at the measured factor 1', async () => {
+test('get_load_reference resolves a Handles movement at the measured factor 1', async () => {
   const stub = stubClient([
     {
       id: 'a-1',
@@ -354,20 +396,20 @@ test('get_load_reference resolves a single-cable movement at the measured factor
 
   assert.match(text, /Cable factor: 1x/);
   assert.match(text, /Factor verified: yes/);
-  assert.match(text, /Factor basis: class-calibrated/);
-  assert.match(text, /Cable engagement: single/);
+  assert.match(text, /Factor basis: accessory-calibrated/);
+  assert.match(text, /Accessory \(the implement the factor is keyed on\): Handles/);
   assert.match(text, /Conversion denominator \(factor x oneRepMax\): 40 lb at weightPercentage 100/);
-  assert.match(text, /Standing Leg Extension/, 'the class names the movement it was measured on');
+  assert.match(text, /Skull Crusher/, 'the accessory names the movement it was measured on');
   assert.match(text, /not a measurement of this movement/, 'the inference is stated, not hidden');
   assert.doesNotMatch(
     text,
     /Unverified Cable Factor/,
-    'a verified class must not carry the half-load warning'
+    'a measured accessory must not carry an unverified warning'
   );
-  assert.doesNotMatch(text, /HALF the pounds requested/);
+  assert.doesNotMatch(text, /DOUBLE the pounds requested/);
 });
 
-test('get_load_reference converts the measured single-cable points for Standing Leg Extension', async () => {
+test('get_load_reference converts the measured AnkleStraps points for Standing Leg Extension', async () => {
   const stub = stubClient([
     {
       id: 'a-1',
@@ -635,7 +677,7 @@ test('a per-set weight percentage still wins over an exercise-level weightLb', a
   assert.match(text, /1 set was converted/, 'only the unspecified set is reported');
 });
 
-test('a single-cable movement writes the full requested load, with the basis stated once', async () => {
+test('a factor-1 movement writes the full requested load, with the basis stated once', async () => {
   let received: TonalWorkoutEstimateSet[] | undefined;
   const stub = creatingClient(
     [
@@ -668,14 +710,192 @@ test('a single-cable movement writes the full requested load, with the basis sta
   assert.deepEqual(received?.map((set) => set.weightPercentage), [50, 60]);
 
   assert.match(text, /oneRepMax 40 lb x factor 1 = 40 lb at 100%/);
-  assert.match(text, /cable-engagement class/, 'the write path states what backs the factor');
+  assert.match(text, /"Handles" accessory/, 'the write path states what backs the factor');
   assert.doesNotMatch(
     text,
     /Unverified Cable Factor/,
-    'a measured class must not be warned about on the write path either'
+    'a measured accessory must not be warned about on the write path either'
   );
   assert.doesNotMatch(text, /HALF the pounds requested/);
   assert.doesNotMatch(text, /DOUBLE|doubling/);
+});
+
+test('the falsifying case end to end: a Handles movement tagged true now sends double the percentage', async () => {
+  // Lateral Raise: accessory Handles, trainerArmsPulledAtSameTime TRUE. The old model read
+  // the attribute, resolved factor 2, and wrote 25% for a 25 lb request against a 50 lb
+  // one-rep max -- the trainer then displayed ~12.5 lb. The accessory resolves factor 1, so
+  // the same request now writes 50% and the trainer displays the 25 lb asked for.
+  let received: TonalWorkoutEstimateSet[] | undefined;
+  const stub = creatingClient(
+    [
+      {
+        id: 'a-1',
+        timestamp: daysAgo(1),
+        sets: [
+          { movementId: 'm-lateral-raise', oneRepMax: 50, baseWeight: 20, avgWeight: 18, repCount: 12 },
+        ],
+      },
+    ],
+    (payload) => {
+      received = payload.sets;
+    }
+  );
+
+  const text = reportText(
+    await createWorkout(stub.client, {
+      title: 'Shoulder Day',
+      exercises: [{ movementName: 'Lateral Raise', sets: 2, reps: 12, weightLb: 25 }],
+    })
+  );
+
+  assert.deepEqual(received?.map((set) => set.weightPercentage), [50, 50]);
+  assert.equal(
+    Math.round((25 / (2 * 50)) * 100),
+    25,
+    'the falsified model wrote 25% for this same request -- half the load'
+  );
+  assert.match(text, /requested 25 lb -> send weightPercentage 50 -> trainer should show 25 lb/);
+  assert.match(text, /oneRepMax 50 lb x factor 1 = 50 lb at 100%/);
+  assert.match(text, /"Handles" accessory/);
+  assert.match(text, /Skull Crusher/, 'the measurement that falsified the old model is named');
+  assert.doesNotMatch(text, /Unverified Cable Factor/, 'Handles was measured');
+});
+
+test('get_load_reference flags PilatesLoops as inferred and warns about doubling', async () => {
+  const stub = stubClient([
+    {
+      id: 'a-1',
+      timestamp: daysAgo(3),
+      sets: [{ movementId: 'm-pilates', oneRepMax: 60, baseWeight: 24, avgWeight: 22, repCount: 15 }],
+    },
+  ]);
+
+  const text = reportText(await getLoadReference(stub.client, { movementName: 'Loop Leg Circle' }));
+
+  assert.match(text, /Cable factor: 1x/);
+  assert.match(text, /Factor verified: NO/);
+  assert.match(text, /Factor basis: accessory-inferred/);
+  assert.match(text, /Accessory \(the implement the factor is keyed on\): PilatesLoops/);
+  assert.match(text, /## ⚠️ Unverified Cable Factor/);
+  assert.match(text, /DOUBLE the pounds requested/);
+  assert.doesNotMatch(text, /HALF the pounds requested/);
+});
+
+const PILATES_ACTIVITY: ActivityFixture[] = [
+  {
+    id: 'a-1',
+    timestamp: daysAgo(3),
+    sets: [{ movementId: 'm-pilates', oneRepMax: 60, baseWeight: 24, avgWeight: 22, repCount: 15 }],
+  },
+];
+
+test('estimate_workout_duration converts an inferred accessory and carries the doubling warning', async () => {
+  // The read/write split, deliberate: this tool commits nothing, so it converts and warns.
+  // create_workout and update_workout refuse the same request below.
+  const stub = stubClient(PILATES_ACTIVITY, {
+    estimateWorkoutDuration: async (sets: TonalWorkoutEstimateSet[]) => ({
+      duration: 300,
+      sets,
+    }),
+  });
+
+  const text = reportText(
+    await estimateWorkoutDuration(stub.client, {
+      exercises: [{ movementName: 'Loop Leg Circle', sets: 1, reps: 15, weightLb: 30 }],
+    })
+  );
+
+  assert.match(text, /requested 30 lb -> send weightPercentage 50 -> trainer should show 30 lb/);
+  assert.match(text, /Unverified Cable Factor — Check The Trainer Before Lifting/);
+  assert.match(text, /DOUBLE the pounds requested/);
+  assert.match(text, /If the real factor is 2, the trainer would instead display about 60 lb — double the request/);
+});
+
+test('create_workout refuses a pounds load on an unmeasured accessory and writes nothing', async () => {
+  const stub = creatingClient(PILATES_ACTIVITY);
+  const response = await createWorkout(stub.client, {
+    title: 'Pilates Day',
+    exercises: [{ movementName: 'Loop Leg Circle', sets: 1, reps: 15, weightLb: 30 }],
+  });
+
+  assert.equal(response.isError, true);
+  assert.equal(stub.created.count, 0, 'an inferred factor must not be committed to a workout');
+
+  const text = reportText(response);
+  assert.match(text, /Refusing to write a pounds-based load for "Loop Leg Circle"/);
+  assert.match(text, /"PilatesLoops" accessory has NEVER been measured against a live trainer/);
+  assert.match(text, /DOUBLE the pounds requested/);
+  assert.match(text, /read the displayed weight off a trainer/);
+  assert.match(text, /prescribe this movement with weight \(raw percentage\) instead of weightLb/);
+  assert.match(text, /get_load_reference and convert_target_weight report the inferred factor/);
+  assert.doesNotMatch(text, /weightPercentage \d/, 'no percentage may be written for an inferred factor');
+});
+
+test('update_workout refuses the same request and leaves the existing workout untouched', async () => {
+  const updates = { count: 0 };
+  const stub = stubClient(PILATES_ACTIVITY, {
+    getUserWorkouts: async (offset: number) =>
+      offset === 0 ? [{ id: 'wk-1', title: 'Pilates Day', createdAt: daysAgo(10) }] : [],
+    getWorkoutById: async () => ({
+      id: 'wk-1',
+      title: 'Pilates Day',
+      shortDescription: '',
+      description: '',
+      coachId: 'c-1',
+      assetId: 'as-1',
+      level: 'All',
+      duration: 1800,
+      sets: [],
+    }),
+    updateWorkout: async () => {
+      updates.count += 1;
+      return { id: 'wk-1', title: 'Pilates Day', duration: 1800, sets: [] };
+    },
+  });
+
+  const response = await updateWorkout(stub.client, {
+    workoutName: 'Pilates Day',
+    exercises: [{ movementName: 'Loop Leg Circle', setDetails: [{ reps: 15, weightLb: 30 }] }],
+  });
+
+  assert.equal(response.isError, true);
+  assert.equal(updates.count, 0, 'an existing workout must not be overwritten on a refused conversion');
+  assert.match(reportText(response), /has NEVER been measured against a live trainer/);
+});
+
+test('an unmeasured accessory is still writable with a raw percentage', async () => {
+  // The refusal is about the pounds conversion, not about the movement: a caller who sets
+  // the percentage themselves has made the factor irrelevant.
+  let received: TonalWorkoutEstimateSet[] | undefined;
+  const stub = creatingClient(PILATES_ACTIVITY, (payload) => {
+    received = payload.sets;
+  });
+
+  const text = reportText(
+    await createWorkout(stub.client, {
+      title: 'Pilates Day',
+      exercises: [{ movementName: 'Loop Leg Circle', sets: 2, reps: 15, weight: 40 }],
+    })
+  );
+
+  assert.equal(stub.created.count, 1);
+  assert.deepEqual(received?.map((set) => set.weightPercentage), [40, 40]);
+  assert.equal(stub.detailFetches.length, 0, 'a percentage needs no reference lookup at all');
+  assert.doesNotMatch(text, /Pound-Based Load Conversion/);
+});
+
+test('create_workout writes nothing for an unrecognised accessory', async () => {
+  const stub = creatingClient(BENCH_ACTIVITY);
+  const response = await createWorkout(stub.client, {
+    title: 'Mystery Day',
+    exercises: [{ movementName: 'Mystery Press', sets: 3, reps: 10, weightLb: 40 }],
+  });
+
+  assert.equal(response.isError, true);
+  assert.equal(stub.created.count, 0, 'an unknown implement must not be guessed at');
+  const text = reportText(response);
+  assert.match(text, /accessory "TricepsBar" carries no calibration/);
+  assert.doesNotMatch(text, /weightPercentage \d/, 'no percentage may be written for an unknown accessory');
 });
 
 test('create_workout writes nothing when a weightLb movement has no load reference', async () => {

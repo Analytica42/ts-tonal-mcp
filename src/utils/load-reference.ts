@@ -7,6 +7,7 @@ import type {
 } from '@dlwiest/ts-tonal-client';
 import { TonalMCPError } from './error-handler.js';
 import {
+  assertFactorIsWritable,
   NON_LIFT_MOVEMENT_NAMES,
   type LoadReference,
   type ReferenceLoadBasis,
@@ -187,6 +188,18 @@ export interface ResolveLoadReferenceOptions {
   lookbackActivities?: number;
 }
 
+export interface ResolveLoadReferencesForExercisesOptions extends ResolveLoadReferenceOptions {
+  /**
+   * Reject any movement whose factor rests on no trainer measurement.
+   *
+   * Set by the mutating callers (create_workout, update_workout) and left off by the
+   * read-only ones, which report an inferred factor with its doubling warning instead. See
+   * assertFactorIsWritable for why a committed number is treated differently from a reported
+   * one.
+   */
+  requireMeasuredFactor?: boolean;
+}
+
 /**
  * Resolves the pound-conversion reference for one movement from its most recent performed set.
  *
@@ -299,19 +312,23 @@ export async function resolveLoadReference(
  * Resolves a reference for every movement in the exercise list that prescribes load in
  * pounds, keyed by movement ID so a caller's spelling cannot mis-key the lookup.
  *
- * Called before any mutation: an unresolvable reference must fail the whole request rather
- * than write a partially converted workout.
+ * Called before any mutation: an unresolvable reference -- or, with requireMeasuredFactor,
+ * an unmeasured one -- must fail the whole request rather than write a partially converted
+ * workout. Both checks run over every movement before anything is written.
  */
 export async function resolveLoadReferencesForExercises(
   client: TonalClient,
   exercises: unknown,
-  options: ResolveLoadReferenceOptions = {}
+  options: ResolveLoadReferencesForExercisesOptions = {}
 ): Promise<Map<string, LoadReference>> {
   const movementNames = collectPoundPrescribedMovementNames(exercises);
   const references = new Map<string, LoadReference>();
 
   for (const movementName of movementNames) {
     const reference = await resolveLoadReference(client, movementName, options);
+    if (options.requireMeasuredFactor) {
+      assertFactorIsWritable(reference);
+    }
     references.set(reference.movementId, reference);
   }
 

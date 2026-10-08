@@ -24,8 +24,8 @@ function describeAge(reference: LoadReference): string {
  * The percentage at which the displayed load equals one one-rep max.
  *
  * Factor-dependent: the conversion denominator is factor x oneRepMax, so 1x oneRepMax is
- * 50% at factor 2 and 100% at factor 1. Hardcoding 50 would misreport every single-cable
- * movement.
+ * 50% at factor 2 (StraightBar) and 100% at factor 1 (every other accessory). Hardcoding 50
+ * would misreport the 202 of 236 on-machine movements that convert at factor 1.
  */
 function oneRepMaxPercentage(reference: LoadReference): number {
   return Math.round((100 / reference.factor.factor) * 100) / 100;
@@ -46,9 +46,10 @@ function conversionFlags(conversion: WeightConversion, reference: LoadReference)
       `requested ${conversion.targetPounds} lb rounded down to weightPercentage 0, i.e. no added resistance. One percentage point is coarser than the target.`
     );
   }
-  if (conversion.singleCableDisplayPounds !== undefined) {
+  const hypothesis = reference.factor.alternateFactorHypothesis;
+  if (conversion.alternateFactorDisplayPounds !== undefined && hypothesis) {
     flags.push(
-      `if the single-cable hypothesis holds for this movement, the trainer would instead display about ${conversion.singleCableDisplayPounds} lb.`
+      `the ${reference.factor.factor}x factor for the "${reference.factor.accessory}" accessory is INFERRED, not measured. If the real factor is ${hypothesis.factor}, the trainer would instead display about ${conversion.alternateFactorDisplayPounds} lb — ${hypothesis.direction} the request.`
     );
   }
   return flags;
@@ -69,7 +70,7 @@ export function formatLoadReferenceReport(reference: LoadReference): string {
   report += `- Cable factor: ${factor.factor}x\n`;
   report += `- Factor verified: ${factor.factorVerified ? 'yes' : 'NO'}\n`;
   report += `- Factor basis: ${factor.factorBasis}\n`;
-  report += `- Cable engagement: ${factor.cableEngagement}\n`;
+  report += `- Accessory (the implement the factor is keyed on): ${factor.accessory}\n`;
   report += `- Conversion denominator (factor x oneRepMax): ${reference.denominatorPounds} lb at weightPercentage 100\n`;
   report += `- Granularity: ${Math.round(reference.poundsPerPercentagePoint * 1000) / 1000} lb per percentage point\n`;
   report += `- Formula: weightPercentage = round(target_lb / ${reference.denominatorPounds} x 100)\n`;
