@@ -1,7 +1,9 @@
 import TonalClient from '@dlwiest/ts-tonal-client';
 import { MCPResponse } from '../types/index.js';
 import { handleToolError } from '../utils/error-handler.js';
-import { exercisesToSets } from '../utils/workout-conversion.js';
+import { exercisesToSetsDetailed } from '../utils/workout-conversion.js';
+import { resolveLoadReferencesForExercises } from '../utils/load-reference.js';
+import { formatWriteConversionSection } from '../utils/load-report.js';
 import { validateWorkoutExercises } from '../utils/validation.js';
 
 export async function estimateWorkoutDuration(
@@ -13,7 +15,10 @@ export async function estimateWorkoutDuration(
     validateWorkoutExercises(exercises);
 
     const movements = await client.getMovements();
-    const sets = exercisesToSets(exercises, movements);
+    const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
+    const { sets, conversions } = exercisesToSetsDetailed(exercises, movements, {
+      loadReferences,
+    });
     const estimate = await client.estimateWorkoutDuration(sets);
 
     const minutes = Math.round(estimate.duration / 60);
@@ -50,12 +55,25 @@ export async function estimateWorkoutDuration(
         } else if (!everySetSpecifiesWeight) {
           report += ` @ ${exercise.weight}% where unspecified`;
         }
+      } else if (typeof exercise.weightLb === 'number') {
+        const everySetSpecifiesLoad =
+          setDetails?.every(
+            detail =>
+              typeof detail?.weight === 'number' || typeof detail?.weightLb === 'number'
+          ) ?? false;
+        if (!setDetails) {
+          report += ` @ ${exercise.weightLb} lb`;
+        } else if (!everySetSpecifiesLoad) {
+          report += ` @ ${exercise.weightLb} lb where unspecified`;
+        }
       }
       if (exercise.isWarmup === true) {
         report += ` (Warmup)`;
       }
       report += `\n`;
     });
+
+    report += formatWriteConversionSection(conversions);
 
     report += `\n_Estimate only — nothing was created or modified on your Tonal._\n`;
 

@@ -4,6 +4,11 @@ import type {
   WorkoutSet,
 } from '@dlwiest/ts-tonal-client';
 import type { ExerciseInput, SetDetail } from '../types/index.js';
+import {
+  convertPoundsToPercentage,
+  type LoadReference,
+  type WeightConversion,
+} from './load-calibration.js';
 
 interface ProcessedExercise {
   exercise: ExerciseInput;
@@ -18,19 +23,114 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** One set whose load was prescribed in pounds, with what was actually written. */
+export interface SetWeightConversion {
+  movementName: string;
+  blockNumber: number;
+  setGroup: number;
+  /** 1-based position within the exercise. */
+  setNumber: number;
+  /** Whether the pounds came from the set itself or the exercise-level fallback. */
+  source: 'set' | 'exercise';
+  reference: LoadReference;
+  conversion: WeightConversion;
+}
+
+export interface ExercisesToSetsOptions {
+  /**
+   * Resolved pound-conversion references keyed by movement ID. Required for every movement
+   * that prescribes weightLb; resolve them with resolveLoadReference before calling.
+   */
+  loadReferences?: ReadonlyMap<string, LoadReference>;
+}
+
+export interface ExercisesToSetsResult {
+  sets: TonalWorkoutEstimateSet[];
+  /** Empty unless some set prescribed load in pounds. */
+  conversions: SetWeightConversion[];
+}
+
+interface ResolvedSetWeight {
+  weightPercentage: number;
+  conversion?: SetWeightConversion;
+}
+
 /**
- * Converts high-level exercise input into low-level workout sets.
+ * Resolves one set's load to an integer weightPercentage.
+ *
+ * Precedence is unchanged for percentages (set value, then exercise fallback, then 0); the
+ * pound fields slot in at the same two levels. weight and weightLb never coexist at one
+ * level -- that is rejected during parsing -- so the order below cannot mask a conflict.
+ */
+function resolveSetWeight(
+  movementName: string,
+  movementId: string,
+  exercise: ExerciseInput,
+  setDetail: SetDetail | undefined,
+  hasSetDetails: boolean,
+  context: { blockNumber: number; setGroup: number; setNumber: number },
+  loadReferences: ReadonlyMap<string, LoadReference> | undefined
+): ResolvedSetWeight {
+  const detail = hasSetDetails ? setDetail : undefined;
+
+  let targetPounds: number | undefined;
+  let source: 'set' | 'exercise' | undefined;
+  if (typeof detail?.weight === 'number') {
+    return { weightPercentage: detail.weight };
+  }
+  if (typeof detail?.weightLb === 'number') {
+    targetPounds = detail.weightLb;
+    source = 'set';
+  } else if (typeof exercise.weight === 'number') {
+    return { weightPercentage: exercise.weight };
+  } else if (typeof exercise.weightLb === 'number') {
+    targetPounds = exercise.weightLb;
+    source = 'exercise';
+  }
+
+  if (targetPounds === undefined || source === undefined) {
+    return { weightPercentage: 0 };
+  }
+
+  const reference = loadReferences?.get(movementId);
+  if (reference === undefined) {
+    throw new Error(
+      `Exercise "${movementName}" prescribes weightLb but no load reference was resolved for it; cannot convert pounds without a oneRepMax.`
+    );
+  }
+
+  const conversion = convertPoundsToPercentage(targetPounds, reference);
+  return {
+    weightPercentage: conversion.weightPercentage,
+    conversion: {
+      movementName,
+      blockNumber: context.blockNumber,
+      setGroup: context.setGroup,
+      setNumber: context.setNumber,
+      source,
+      reference,
+      conversion,
+    },
+  };
+}
+
+/**
+ * Converts high-level exercise input into low-level workout sets, reporting every
+ * pound-to-percentage conversion it performed.
+ *
  * Handles block grouping, round-robin set ordering, and movement type detection.
  *
  * @param exercises - Array of exercises in high-level format
  * @param movements - Movement database for name-to-ID lookup and type detection
- * @returns Array of TonalWorkoutEstimateSet objects ready for API submission
- * @throws Error if movement not found or validation fails
+ * @param options - Resolved load references, required only when weightLb is used
+ * @returns The sets ready for API submission plus a per-set conversion record
+ * @throws Error if movement not found, validation fails, or a weightLb set has no reference
  */
-export function exercisesToSets(
+export function exercisesToSetsDetailed(
   exercises: unknown[],
-  movements: TonalMovement[]
-): TonalWorkoutEstimateSet[] {
+  movements: TonalMovement[],
+  options: ExercisesToSetsOptions = {}
+): ExercisesToSetsResult {
   const parsedExercises: ExerciseInput[] = exercises.map((input, exerciseIndex) => {
     if (!isRecord(input)) {
       throw new Error(`Exercise at index ${exerciseIndex} must be an object`);
@@ -69,11 +169,18 @@ export function exercisesToSets(
       );
     }
 
-    for (const field of ['reps', 'duration', 'weight'] as const) {
+    for (const field of ['reps', 'duration', 'weight', 'weightLb'] as const) {
       const value = input[field];
       if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
         throw new Error(`Exercise "${movementName}" ${field} must be a number`);
       }
+    }
+    // A percentage and an absolute load describe the same field two ways; picking one
+    // silently would write a load the caller did not ask for.
+    if (input.weight !== undefined && input.weightLb !== undefined) {
+      throw new Error(
+        `Exercise "${movementName}" cannot specify both weight (${String(input.weight)}%) and weightLb (${String(input.weightLb)} lb); they are the same setting expressed two ways. Use one.`
+      );
     }
     if (
       input.block !== undefined &&
@@ -96,13 +203,18 @@ export function exercisesToSets(
           throw new Error(`Exercise "${movementName}" setDetails[${setIndex}] must be an object`);
         }
 
-        for (const field of ['reps', 'duration', 'weight'] as const) {
+        for (const field of ['reps', 'duration', 'weight', 'weightLb'] as const) {
           const value = setDetailInput[field];
           if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value))) {
             throw new Error(
               `Exercise "${movementName}" setDetails[${setIndex}].${field} must be a number`
             );
           }
+        }
+        if (setDetailInput.weight !== undefined && setDetailInput.weightLb !== undefined) {
+          throw new Error(
+            `Exercise "${movementName}" setDetails[${setIndex}] cannot specify both weight (${String(setDetailInput.weight)}%) and weightLb (${String(setDetailInput.weightLb)} lb); they are the same setting expressed two ways. Use one.`
+          );
         }
         if (
           setDetailInput.reps !== undefined &&
@@ -139,6 +251,9 @@ export function exercisesToSets(
         if (typeof setDetailInput.weight === 'number') {
           setDetail.weight = setDetailInput.weight;
         }
+        if (typeof setDetailInput.weightLb === 'number') {
+          setDetail.weightLb = setDetailInput.weightLb;
+        }
         if (typeof setDetailInput.warmUp === 'boolean') {
           setDetail.warmUp = setDetailInput.warmUp;
         }
@@ -167,6 +282,9 @@ export function exercisesToSets(
     }
     if (typeof input.weight === 'number') {
       exercise.weight = input.weight;
+    }
+    if (typeof input.weightLb === 'number') {
+      exercise.weightLb = input.weightLb;
     }
     if (typeof input.isWarmup === 'boolean') {
       exercise.isWarmup = input.isWarmup;
@@ -292,6 +410,7 @@ export function exercisesToSets(
 
   // Build sets array with proper round structure
   const sets: TonalWorkoutEstimateSet[] = [];
+  const conversions: SetWeightConversion[] = [];
   const blockHasStarted = new Set<number>();
 
   // Process blocks in order
@@ -318,6 +437,18 @@ export function exercisesToSets(
 
           const hasSetDetails = pe.exercise.setDetails !== undefined;
           const setDetail = pe.exercise.setDetails?.[round - 1];
+          const resolvedWeight = resolveSetWeight(
+            pe.exercise.movementName,
+            pe.movementId,
+            pe.exercise,
+            setDetail,
+            hasSetDetails,
+            { blockNumber, setGroup: pe.setGroup!, setNumber: round },
+            options.loadReferences
+          );
+          if (resolvedWeight.conversion !== undefined) {
+            conversions.push(resolvedWeight.conversion);
+          }
           const setData: TonalWorkoutEstimateSet = {
             blockStart: isFirstSetOfBlock,
             movementId: pe.movementId,
@@ -332,9 +463,7 @@ export function exercisesToSets(
             warmUp: hasSetDetails
               ? (setDetail?.warmUp ?? pe.exercise.isWarmup ?? false)
               : (pe.exercise.isWarmup ?? false),
-            weightPercentage: hasSetDetails
-              ? (setDetail?.weight ?? pe.exercise.weight ?? 0)
-              : (pe.exercise.weight ?? 0),
+            weightPercentage: resolvedWeight.weightPercentage,
             setGroup: pe.setGroup!,
             round: round,
             description: hasSetDetails ? (setDetail?.description ?? '') : '',
@@ -360,7 +489,51 @@ export function exercisesToSets(
     }
   }
 
-  return sets;
+  return { sets, conversions };
+}
+
+/**
+ * Converts high-level exercise input into low-level workout sets.
+ *
+ * Thin wrapper over exercisesToSetsDetailed for callers that do not need the
+ * pound-conversion record.
+ */
+export function exercisesToSets(
+  exercises: unknown[],
+  movements: TonalMovement[],
+  options: ExercisesToSetsOptions = {}
+): TonalWorkoutEstimateSet[] {
+  return exercisesToSetsDetailed(exercises, movements, options).sets;
+}
+
+/**
+ * Collects the movement names that prescribe load in pounds, so their references can be
+ * resolved before any mutation.
+ *
+ * Deliberately permissive: malformed input is ignored here and reported by
+ * exercisesToSetsDetailed's validation, which produces the better message.
+ */
+export function collectPoundPrescribedMovementNames(exercises: unknown): string[] {
+  if (!Array.isArray(exercises)) {
+    return [];
+  }
+
+  const names = new Map<string, string>();
+  for (const exercise of exercises) {
+    if (!isRecord(exercise) || typeof exercise.movementName !== 'string') {
+      continue;
+    }
+    const setDetails = Array.isArray(exercise.setDetails) ? exercise.setDetails : [];
+    const usesPounds =
+      typeof exercise.weightLb === 'number' ||
+      setDetails.some(
+        (setDetail) => isRecord(setDetail) && typeof setDetail.weightLb === 'number'
+      );
+    if (usesPounds) {
+      names.set(exercise.movementName.trim().toLowerCase(), exercise.movementName);
+    }
+  }
+  return Array.from(names.values());
 }
 
 /**

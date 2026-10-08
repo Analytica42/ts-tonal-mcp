@@ -1,7 +1,9 @@
 import type TonalClient from '@dlwiest/ts-tonal-client';
 import type { MCPResponse } from '../types/index.js';
 import { handleToolError } from '../utils/error-handler.js';
-import { exercisesToSets, reconstructExercisesFromSets } from '../utils/workout-conversion.js';
+import { exercisesToSetsDetailed, reconstructExercisesFromSets } from '../utils/workout-conversion.js';
+import { resolveLoadReferencesForExercises } from '../utils/load-reference.js';
+import { formatWriteConversionSection } from '../utils/load-report.js';
 import { findWorkoutByName } from './custom-workouts.js';
 import {
   validateOptionalString,
@@ -133,7 +135,12 @@ export async function updateWorkout(
     const originalWorkout = matchingWorkouts[0];
     const detailedWorkout = await client.getWorkoutById(originalWorkout.id);
     const movements = await client.getMovements();
-    const newSets = exercisesToSets(exercises, movements);
+    // Resolve pound references before the mutation, so a missing oneRepMax cannot overwrite
+    // an existing workout with partially converted load.
+    const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
+    const { sets: newSets, conversions } = exercisesToSetsDetailed(exercises, movements, {
+      loadReferences,
+    });
 
     const updatedWorkout = await client.updateWorkout({
       id: detailedWorkout.id,
@@ -165,7 +172,8 @@ export async function updateWorkout(
       2
     );
     report += `\n\`\`\`\n\n`;
-    report += `_Your changes have been saved and synced to your Tonal!_\n`;
+    report += formatWriteConversionSection(conversions);
+    report += `\n_Your changes have been saved and synced to your Tonal!_\n`;
 
     return {
       content: [{ type: 'text' as const, text: report }],

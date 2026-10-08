@@ -1,7 +1,9 @@
 import TonalClient, { type TonalWorkout } from '@dlwiest/ts-tonal-client';
 import { MCPResponse } from '../types/index.js';
 import { TonalMCPError, handleToolError } from '../utils/error-handler.js';
-import { exercisesToSets } from '../utils/workout-conversion.js';
+import { exercisesToSetsDetailed } from '../utils/workout-conversion.js';
+import { resolveLoadReferencesForExercises } from '../utils/load-reference.js';
+import { formatWriteConversionSection } from '../utils/load-report.js';
 import {
   validateOptionalString,
   validateRequiredString,
@@ -273,7 +275,12 @@ export async function createWorkout(
     validateWorkoutExercises(exercises);
 
     const movements = await client.getMovements();
-    const sets = exercisesToSets(exercises, movements);
+    // Resolve pound references before the mutation: an unresolvable oneRepMax must fail the
+    // request outright rather than create a workout with half its load converted.
+    const loadReferences = await resolveLoadReferencesForExercises(client, exercises);
+    const { sets, conversions } = exercisesToSetsDetailed(exercises, movements, {
+      loadReferences,
+    });
 
     const workout = await client.createWorkout({
       title,
@@ -305,12 +312,16 @@ export async function createWorkout(
 
       if (typeof exercise.weight === 'number') {
         report += ` @ ${exercise.weight}%`;
+      } else if (typeof exercise.weightLb === 'number') {
+        report += ` @ ${exercise.weightLb} lb (converted to a percentage)`;
       }
       if (exercise.isWarmup === true) {
         report += ` (Warmup)`;
       }
       report += `\n`;
     });
+
+    report += formatWriteConversionSection(conversions);
 
     report += `\n_Your workout has been saved and is ready to use on your Tonal!_\n`;
 

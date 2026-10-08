@@ -44,6 +44,12 @@ export interface SetDetail {
   reps?: number;
   duration?: number;
   weight?: number;
+  /**
+   * Absolute target load in pounds, converted to an integer weightPercentage at save time.
+   * Mutually exclusive with weight on the same set. 0 means zero load and is distinct from
+   * omitting the field.
+   */
+  weightLb?: number;
   warmUp?: boolean;
   dropSet?: boolean;
   burnout?: boolean;
@@ -56,6 +62,12 @@ export interface ExerciseInput {
   reps?: number; // For reps-based movements
   duration?: number; // For duration-based movements (in seconds)
   weight?: number; // Optional weight percentage (0-100)
+  /**
+   * Optional absolute target load in pounds, converted to an integer weightPercentage at
+   * save time. Mutually exclusive with weight at this level; acts as the per-set fallback
+   * when setDetails is supplied.
+   */
+  weightLb?: number;
   isWarmup?: boolean;
   block?: number; // Group exercises into the same block (same block = exercises alternate)
   setDetails?: SetDetail[];

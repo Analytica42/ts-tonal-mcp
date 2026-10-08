@@ -14,6 +14,11 @@ import { getStrengthScores } from './strength-scores.js';
 import { estimateWorkoutDuration } from './workout-duration.js';
 import { listWorkoutActivities } from './workout-activities.js';
 import { getWorkoutActivityDetails, getWorkoutSummary } from './workout-activity-details.js';
+import { getLoadReference, convertTargetWeight } from './load-prescription.js';
+import {
+  DEFAULT_LOOKBACK_ACTIVITIES,
+  MAX_LOOKBACK_ACTIVITIES,
+} from '../utils/load-reference.js';
 
 const setDetailsSchema = {
   type: 'array',
@@ -33,6 +38,11 @@ const setDetailsSchema = {
       weight: {
         type: 'number',
         description: 'Weight percentage (0-100) for this set',
+      },
+      weightLb: {
+        type: 'number',
+        minimum: 0,
+        description: 'Absolute target load in POUNDS for this set, converted to an integer weightPercentage using the movement\'s current one-rep max. Mutually exclusive with weight on the same set (supplying both is rejected). 0 means zero load and is not the same as omitting the field. Requires an on-machine movement with performed-set history; off-machine movements carry no cable load and are rejected. Use get_load_reference first to see the one-rep max, its age, and whether the cable factor is verified.',
       },
       warmUp: {
         type: 'boolean',
@@ -81,6 +91,11 @@ const exerciseItemSchema = {
     weight: {
       type: 'number',
       description: 'Optional: Weight percentage (0-100) for this exercise. When setDetails is supplied, this is the fallback for any set that omits its own weight.',
+    },
+    weightLb: {
+      type: 'number',
+      minimum: 0,
+      description: 'Optional: absolute target load in POUNDS for this exercise, converted to an integer weightPercentage using the movement\'s current one-rep max. Mutually exclusive with weight at this level (supplying both is rejected). When setDetails is supplied, this is the fallback for any set that specifies neither weight nor weightLb. The response reports, per converted set, the pounds requested, the percentage sent, and the pounds the trainer should display.',
     },
     setDetails: setDetailsSchema,
     isWarmup: {
@@ -429,6 +444,69 @@ const workoutTools: MCPToolDefinition[] = [
   },
 ];
 
+// Load Prescription Tools
+const loadTools: MCPToolDefinition[] = [
+  {
+    name: 'get_load_reference',
+    description: `Get everything needed to prescribe load in pounds for one movement: its current one-rep max, the base weight and reps of the most recent performed set, when that set happened and how stale it is, the cable factor in use, whether that factor has been VERIFIED against a live trainer reading, the conversion denominator (factor x oneRepMax), the pounds-per-percentage-point granularity, and the percentage implied by the last performed load as a self-check. Tonal stores load only as a percentage, which resolves on the trainer against the one-rep max, so this is the lookup that makes pounds meaningful. Scans recent activities newest-first and stops at the first one containing the movement; resolved references are cached in-process for 5 minutes. A movement with no performed-set history has no one-rep max and fails explicitly rather than guessing one, and an off-machine movement fails because it carries no cable load to convert against. The cable factor is read from the movement's own trainerArmsPulledAtSameTime attribute, never from its name or from isBilateral (which describes limbs, not cables). Only Barbell Bench Press has a measured cable factor; every other movement reports factorVerified NO with a caution that the prescribed load may come out roughly half of what was asked.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        movementName: {
+          type: 'string',
+          description: 'Exact movement name (use search_movements to find it).',
+        },
+        lookbackActivities: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_LOOKBACK_ACTIVITIES,
+          default: DEFAULT_LOOKBACK_ACTIVITIES,
+          description: `How many of the most recent activities to scan for a performed set (default ${DEFAULT_LOOKBACK_ACTIVITIES}, ceiling ${MAX_LOOKBACK_ACTIVITIES}). Each activity is a separate API round trip, so raise this only when a movement has not been trained recently.`,
+        },
+      },
+      required: ['movementName'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: getLoadReference,
+  },
+  {
+    name: 'convert_target_weight',
+    description: `Convert a target load in POUNDS into the integer weightPercentage to send for one movement. Pure arithmetic over the same reference get_load_reference returns (cached in-process for 5 minutes), so converting a whole exercise costs no extra scanning. Reports, per target, the percentage to send, the pounds actually achievable after integer rounding, the signed delta from the request, and whether the cable factor is verified. Accepts an array of targets to convert every set of an exercise in one call. Fails explicitly for a movement with no performed-set history, and for an off-machine movement that carries no cable load, rather than substituting a default one-rep max or cable factor. To write the load rather than inspect it, pass weightLb to create_workout or update_workout, which performs the same conversion and reports it per set.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        movementName: {
+          type: 'string',
+          description: 'Exact movement name (use search_movements to find it).',
+        },
+        targetPounds: {
+          oneOf: [
+            { type: 'number', minimum: 0 },
+            { type: 'array', items: { type: 'number', minimum: 0 }, minItems: 1 },
+          ],
+          description: 'Target load in pounds, or an array of targets to convert a whole exercise at once. Must be at least 0; a negative percentage is invalid.',
+        },
+        lookbackActivities: {
+          type: 'integer',
+          minimum: 1,
+          maximum: MAX_LOOKBACK_ACTIVITIES,
+          default: DEFAULT_LOOKBACK_ACTIVITIES,
+          description: `How many of the most recent activities to scan for a performed set (default ${DEFAULT_LOOKBACK_ACTIVITIES}, ceiling ${MAX_LOOKBACK_ACTIVITIES}).`,
+        },
+      },
+      required: ['movementName', 'targetPounds'],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+    },
+    handler: convertTargetWeight,
+  },
+];
+
 // Exercise/Movement Tools
 const movementTools: MCPToolDefinition[] = [
   {
@@ -541,6 +619,11 @@ export const toolCategories: ToolCategory[] = [
     name: 'movements',
     description: 'Exercise and movement database',
     tools: movementTools,
+  },
+  {
+    name: 'load',
+    description: 'Pound-based load prescription: one-rep-max references and pound-to-percentage conversion',
+    tools: loadTools,
   },
 ];
 
