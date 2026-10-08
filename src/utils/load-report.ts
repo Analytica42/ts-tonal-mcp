@@ -1,4 +1,6 @@
 import {
+  CALIBRATED_PERCENTAGE_CEILING,
+  factorBasisStatement,
   type LoadReference,
   type WeightConversion,
   unverifiedFactorWarning,
@@ -18,12 +20,25 @@ function describeAge(reference: LoadReference): string {
   return `performed ${performedAt} (${label})`;
 }
 
+/**
+ * The percentage at which the displayed load equals one one-rep max.
+ *
+ * Factor-dependent: the conversion denominator is factor x oneRepMax, so 1x oneRepMax is
+ * 50% at factor 2 and 100% at factor 1. Hardcoding 50 would misreport every single-cable
+ * movement.
+ */
+function oneRepMaxPercentage(reference: LoadReference): number {
+  return Math.round((100 / reference.factor.factor) * 100) / 100;
+}
+
 /** Flags that must travel with a conversion result, in prose. */
-function conversionFlags(conversion: WeightConversion): string[] {
+function conversionFlags(conversion: WeightConversion, reference: LoadReference): string[] {
   const flags: string[] = [];
   if (conversion.exceedsCalibratedRange) {
+    const oneRepMaxPct = oneRepMaxPercentage(reference);
+    const multiple = Math.round((conversion.weightPercentage / oneRepMaxPct) * 100) / 100;
     flags.push(
-      `weightPercentage ${conversion.weightPercentage} EXCEEDS the measured calibration range (historical sets span 28.9%-50.0%, and 100% is exactly 1x oneRepMax). Values above 100 do round-trip, but this load is above a one-rep max -- confirm it is intended.`
+      `weightPercentage ${conversion.weightPercentage} EXCEEDS the ${CALIBRATED_PERCENTAGE_CEILING}% calibration ceiling. At factor ${reference.factor.factor} one one-rep max is ${oneRepMaxPct}%, so this is about ${multiple}x oneRepMax. Values above ${CALIBRATED_PERCENTAGE_CEILING} do round-trip, but confirm the load is intended.`
     );
   }
   if (conversion.roundedToZero) {
@@ -59,9 +74,7 @@ export function formatLoadReferenceReport(reference: LoadReference): string {
   report += `- Granularity: ${Math.round(reference.poundsPerPercentagePoint * 1000) / 1000} lb per percentage point\n`;
   report += `- Formula: weightPercentage = round(target_lb / ${reference.denominatorPounds} x 100)\n`;
 
-  if (factor.calibration) {
-    report += `- Calibrated on ${factor.calibration.verifiedOn}: ${factor.calibration.evidence}\n`;
-  }
+  report += `- Verification basis: ${factorBasisStatement(factor)}\n`;
 
   report += `\n## Reference Set\n`;
   report += `- Source activity: ${referenceSet.activityId}\n`;
@@ -72,7 +85,7 @@ export function formatLoadReferenceReport(reference: LoadReference): string {
   report += `- Weight percentage Tonal recorded: ${referenceSet.weightPercentage ?? 'not reported'}\n`;
   report += referenceSet.impliedPercentage === null
     ? `- Implied percentage of that load: not computable (no usable load on the reference set)\n`
-    : `- Implied percentage of that load: ${referenceSet.impliedPercentage}% (from ${referenceSet.impliedPercentageBasis}; a self-check -- above 50% means the working load exceeded a one-rep max and the factor is suspect)\n`;
+    : `- Implied percentage of that load: ${referenceSet.impliedPercentage}% (from ${referenceSet.impliedPercentageBasis}; a self-check -- at factor ${factor.factor} one one-rep max is ${oneRepMaxPercentage(reference)}%, so a value above that means the working load exceeded a one-rep max and the factor is suspect)\n`;
   report += `- Activities scanned to find it: ${reference.activitiesScanned}\n`;
   report += `- Staleness matters: Tonal recomputes oneRepMax from the most recent set, so an old reference converts against an old strength level.\n`;
 
@@ -90,14 +103,15 @@ export function formatConvertTargetWeightReport(
 ): string {
   let report = `# Converted Target Load: ${reference.movementName}\n\n`;
   report += `- One-rep max: ${reference.oneRepMax} lb | factor ${reference.factor.factor}x | denominator ${reference.denominatorPounds} lb\n`;
-  report += `- factorVerified: ${reference.factor.factorVerified}\n`;
+  report += `- factorVerified: ${reference.factor.factorVerified} (${reference.factor.factorBasis})\n`;
+  report += `- Verification basis: ${factorBasisStatement(reference.factor)}\n`;
   report += `- Reference set ${describeAge(reference)}\n`;
   report += `- Granularity: ${Math.round(reference.poundsPerPercentagePoint * 1000) / 1000} lb per percentage point\n`;
 
   report += `\n## Conversions\n`;
   conversions.forEach((conversion) => {
     report += `- ${formatConversionLine(conversion)}\n`;
-    conversionFlags(conversion).forEach((flag) => {
+    conversionFlags(conversion, reference).forEach((flag) => {
       report += `  - Note: ${flag}\n`;
     });
   });
@@ -126,7 +140,7 @@ export function formatWriteConversionSection(conversions: SetWeightConversion[])
   conversions.forEach((record) => {
     const scope = record.source === 'exercise' ? ' (from the exercise-level weightLb)' : '';
     section += `- **${record.movementName}** block ${record.blockNumber}, set ${record.setNumber}${scope}: ${formatConversionLine(record.conversion)}\n`;
-    conversionFlags(record.conversion).forEach((flag) => {
+    conversionFlags(record.conversion, record.reference).forEach((flag) => {
       section += `  - Note: ${flag}\n`;
     });
   });
@@ -142,6 +156,7 @@ export function formatWriteConversionSection(conversions: SetWeightConversion[])
   section += `\n### Conversion basis\n`;
   referencesByMovement.forEach((reference) => {
     section += `- ${reference.movementName}: oneRepMax ${reference.oneRepMax} lb x factor ${reference.factor.factor} = ${reference.denominatorPounds} lb at 100%; reference set ${describeAge(reference)}\n`;
+    section += `  - ${factorBasisStatement(reference.factor)}\n`;
   });
 
   const unverified = Array.from(referencesByMovement.values()).filter(

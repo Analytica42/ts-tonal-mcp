@@ -46,6 +46,20 @@ const ROW: TonalMovement = {
   onMachineInfo: { trainerArmsPulledAtSameTime: false },
 } as unknown as TonalMovement;
 
+// The single-cable calibration movement: oneRepMax 104.21186002414206, trainer read
+// 26/52/78 lb at pct 25/50/75, which resolves the single-cable class at factor 1.
+const LEG_EXTENSION: TonalMovement = {
+  id: 'm-leg-extension',
+  name: 'Standing Leg Extension',
+  countReps: true,
+  onMachine: true,
+  isBilateral: true,
+  isTwoSided: false,
+  onMachineInfo: { trainerArmsPulledAtSameTime: false },
+} as unknown as TonalMovement;
+
+const LEG_EXTENSION_ONE_REP_MAX = 104.21186002414206;
+
 const REST: TonalMovement = {
   id: 'm-rest',
   name: 'Rest',
@@ -88,7 +102,7 @@ function stubClient(
   const counters = { summaryFetches: 0 };
 
   const client = {
-    getMovements: async () => [BENCH, ROW, REST, UNTRAINED, PLANK],
+    getMovements: async () => [BENCH, ROW, LEG_EXTENSION, REST, UNTRAINED, PLANK],
     getActivitySummaries: async () => {
       counters.summaryFetches += 1;
       // Reversed on purpose: resolution must sort by timestamp, not trust API order.
@@ -314,7 +328,8 @@ test('get_load_reference reports the factor, denominator, granularity and verifi
   assert.match(text, /One-rep max \(oneRepMax\): 83\.50363 lb/);
   assert.match(text, /Cable factor: 2x/);
   assert.match(text, /Factor verified: yes/);
-  assert.match(text, /Factor basis: calibrated/);
+  assert.match(text, /Factor basis: movement-calibrated/);
+  assert.match(text, /Verification basis: Factor 2x was measured on this movement itself/);
   assert.match(text, /Conversion denominator \(factor x oneRepMax\): 167\.00726 lb at weightPercentage 100/);
   assert.match(text, /Granularity: 1\.67 lb per percentage point/);
   assert.match(text, /Base weight \(baseWeight, dialled in on the machine\): 69\.5 lb/);
@@ -325,7 +340,7 @@ test('get_load_reference reports the factor, denominator, granularity and verifi
   assert.doesNotMatch(text, /Unverified Cable Factor/);
 });
 
-test('get_load_reference warns prominently for an unverified movement', async () => {
+test('get_load_reference resolves a single-cable movement at the measured factor 1', async () => {
   const stub = stubClient([
     {
       id: 'a-1',
@@ -337,12 +352,50 @@ test('get_load_reference warns prominently for an unverified movement', async ()
     await getLoadReference(stub.client, { movementName: 'Single-Arm Bent Over Row' })
   );
 
-  assert.match(text, /Factor verified: NO/);
-  assert.match(text, /Factor basis: trainerArmsPulledAtSameTime/);
+  assert.match(text, /Cable factor: 1x/);
+  assert.match(text, /Factor verified: yes/);
+  assert.match(text, /Factor basis: class-calibrated/);
   assert.match(text, /Cable engagement: single/);
-  assert.match(text, /## ⚠️ Unverified Cable Factor/);
-  assert.match(text, /HALF the pounds requested/);
-  assert.doesNotMatch(text, /DOUBLE/);
+  assert.match(text, /Conversion denominator \(factor x oneRepMax\): 40 lb at weightPercentage 100/);
+  assert.match(text, /Standing Leg Extension/, 'the class names the movement it was measured on');
+  assert.match(text, /not a measurement of this movement/, 'the inference is stated, not hidden');
+  assert.doesNotMatch(
+    text,
+    /Unverified Cable Factor/,
+    'a verified class must not carry the half-load warning'
+  );
+  assert.doesNotMatch(text, /HALF the pounds requested/);
+});
+
+test('get_load_reference converts the measured single-cable points for Standing Leg Extension', async () => {
+  const stub = stubClient([
+    {
+      id: 'a-1',
+      timestamp: daysAgo(1),
+      sets: [
+        {
+          movementId: 'm-leg-extension',
+          oneRepMax: LEG_EXTENSION_ONE_REP_MAX,
+          baseWeight: 52,
+          avgWeight: 48,
+          repCount: 10,
+        },
+      ],
+    },
+  ]);
+
+  const text = reportText(
+    await convertTargetWeight(stub.client, {
+      movementName: 'Standing Leg Extension',
+      targetPounds: [26.05, 52, 78.16],
+    })
+  );
+
+  assert.match(text, /requested 26\.05 lb -> send weightPercentage 25/);
+  assert.match(text, /requested 52 lb -> send weightPercentage 50 -> trainer should show 52\.11 lb/);
+  assert.match(text, /requested 78\.16 lb -> send weightPercentage 75/);
+  assert.match(text, /factorVerified: true \(movement-calibrated\)/);
+  assert.doesNotMatch(text, /Unverified Cable Factor/);
 });
 
 test('convert_target_weight converts an array of targets in one call', async () => {
@@ -582,7 +635,7 @@ test('a per-set weight percentage still wins over an exercise-level weightLb', a
   assert.match(text, /1 set was converted/, 'only the unspecified set is reported');
 });
 
-test('an unverified movement writes a result and says so once, prominently', async () => {
+test('a single-cable movement writes the full requested load, with the basis stated once', async () => {
   let received: TonalWorkoutEstimateSet[] | undefined;
   const stub = creatingClient(
     [
@@ -603,24 +656,26 @@ test('an unverified movement writes a result and says so once, prominently', asy
       exercises: [
         {
           movementName: 'Single-Arm Bent Over Row',
-          setDetails: [{ reps: 10, weightLb: 40 }, { reps: 10, weightLb: 48 }],
+          setDetails: [{ reps: 10, weightLb: 20 }, { reps: 10, weightLb: 24 }],
         },
       ],
     })
   );
 
-  // The conversion still happens -- the coach needs a number -- at the safe factor of 2.
+  // Factor 1: the denominator is the 1RM itself, so 20 lb of a 40 lb 1RM is 50%. At the old
+  // assumed factor of 2 these same requests would have been written as 25% and 30%.
   assert.equal(stub.created.count, 1);
   assert.deepEqual(received?.map((set) => set.weightPercentage), [50, 60]);
 
-  assert.match(text, /### ⚠️ Unverified Cable Factor — Check The Trainer Before Lifting/);
-  assert.match(text, /1 movement in this workout had load prescribed in pounds against an UNVERIFIED cable factor/);
-  assert.match(text, /HALF the pounds requested/);
-  assert.match(text, /if the single-cable hypothesis holds .* about 20 lb/);
-  assert.doesNotMatch(text, /DOUBLE|doubling/, 'the safe default cannot over-load');
-
-  const headingCount = text.split('Unverified Cable Factor').length - 1;
-  assert.equal(headingCount, 1, 'the caution is stated once, not once per set');
+  assert.match(text, /oneRepMax 40 lb x factor 1 = 40 lb at 100%/);
+  assert.match(text, /cable-engagement class/, 'the write path states what backs the factor');
+  assert.doesNotMatch(
+    text,
+    /Unverified Cable Factor/,
+    'a measured class must not be warned about on the write path either'
+  );
+  assert.doesNotMatch(text, /HALF the pounds requested/);
+  assert.doesNotMatch(text, /DOUBLE|doubling/);
 });
 
 test('create_workout writes nothing when a weightLb movement has no load reference', async () => {
@@ -660,7 +715,8 @@ test('a percentage above the calibrated range is flagged on the write path', asy
   );
 
   assert.match(text, /send weightPercentage 150/);
-  assert.match(text, /EXCEEDS the measured calibration range/);
+  assert.match(text, /EXCEEDS the 100% calibration ceiling/);
+  assert.match(text, /about 3x oneRepMax/, 'the multiple is derived from the factor, not hardcoded');
 });
 
 test('update_workout converts weightLb and reports it, and writes nothing when unresolvable', async () => {
